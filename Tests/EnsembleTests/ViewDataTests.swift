@@ -247,6 +247,29 @@ struct ViewDataTests {
         continuations[1].finish()
     }
 
+    @Test("A retry that completes without a result restores its failure")
+    func emptyRetryRestoresFailure() async throws {
+        var continuations: [AsyncStream<Result<Int, TestError>>.Continuation] = []
+        let data = ViewData<Int>()
+        let context = ViewDataContext()
+
+        context.bind({
+            let (stream, continuation) = AsyncStream<Result<Int, TestError>>.makeStream()
+            continuations.append(continuation)
+            return stream
+        }, to: data)
+
+        continuations[0].yield(.failure(.expected))
+        #expect(await eventually { data.isFailed })
+
+        let retry = try #require(data.retryAction)
+        retry()
+        #expect(await eventually { continuations.count == 2 && data.isLoading })
+
+        continuations[1].finish()
+        #expect(await eventually { data.isFailed })
+    }
+
     @Test("Programmatic reload resubscribes by default")
     func reloadResubscribes() async {
         var continuations: [AsyncStream<Result<Int, TestError>>.Continuation] = []

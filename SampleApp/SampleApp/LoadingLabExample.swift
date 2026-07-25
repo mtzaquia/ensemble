@@ -88,7 +88,13 @@ struct LoadingLabExample: View {
                     Slider(value: $viewModel.duration, in: 0.5...8, step: 0.5)
                 }
 
-                Toggle("Fail when complete", isOn: $viewModel.shouldFail)
+                Toggle(
+                    "Fail when complete",
+                    isOn: Binding(
+                        get: { viewModel.shouldFail },
+                        set: { viewModel.setShouldFail($0) }
+                    )
+                )
 
                 Button {
                     viewModel.toggleAutomaticLoading()
@@ -116,6 +122,52 @@ struct LoadingLabExample: View {
                 .accessibilityIdentifier(SampleAppAccessibility.loadingLabRestoreCache)
             }
 
+            Section {
+                ForEach(viewModel.events) { event in
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        VStack {
+                            Image(systemName: event.systemImage)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .frame(width: 20)
+
+                            Text("#\(event.id)")
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.tertiary)
+                        }
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(event.title)
+                                .font(.footnote)
+                                .fontWeight(.semibold)
+                            Text(event.detail)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
+                if viewModel.events.isEmpty {
+                    ContentUnavailableView(
+                        "No events yet",
+                        systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90",
+                        description: Text("Use the controls above to build a new history.")
+                    )
+                } else {
+                    Button(role: .destructive) {
+                        viewModel.clearHistory()
+                    } label: {
+                        Label("Clear history", systemImage: "trash")
+                    }
+                    .accessibilityIdentifier(SampleAppAccessibility.loadingLabClearHistory)
+                }
+            } header: {
+                Text("What happened")
+            } footer: {
+                Text("Newest first. The lab keeps the most recent 20 events.")
+            }
+            .accessibilityIdentifier(SampleAppAccessibility.loadingLabHistory)
+
             Section("Try this") {
                 Label("Delete the cache, then choose In-flight to reveal placeholders.", systemImage: "hand.tap")
                 Label("Choose Finished to watch the response rows replace the old data.", systemImage: "sparkles")
@@ -129,6 +181,13 @@ struct LoadingLabExample: View {
             viewModel.start()
         }
     }
+}
+
+private struct LoadingLabEvent: Identifiable {
+    let id: Int
+    let title: String
+    let detail: String
+    let systemImage: String
 }
 
 private enum LoadingLabRequestStage: String, CaseIterable, Identifiable {
@@ -152,14 +211,16 @@ private final class LoadingLabViewModel {
     let entries = ViewData(SampleEntry.cached)
 
     var duration = 3.0
-    var shouldFail = false
+    private(set) var shouldFail = false
     private(set) var requestStage = LoadingLabRequestStage.idle
     private(set) var isRunningAutomatically = false
+    private(set) var events: [LoadingLabEvent] = []
 
     @ObservationIgnored private let context = ViewDataContext()
     @ObservationIgnored private let useCase = LoadingLabUseCase()
     @ObservationIgnored private var automaticTask: Task<Void, Never>?
     @ObservationIgnored private var hasStarted = false
+    @ObservationIgnored private var nextEventID = 0
     @ObservationIgnored private var requestIsActive = false
 
     var hasCache: Bool {
@@ -213,6 +274,11 @@ private final class LoadingLabViewModel {
             reload: .refresh {}
         )
         useCase.finish(with: .success(SampleEntry.cached))
+        record(
+            title: "Sample cache installed",
+            detail: "The lab started with cached rows ready for the first request.",
+            systemImage: "internaldrive"
+        )
     }
 
     func select(_ stage: LoadingLabRequestStage) {
@@ -231,9 +297,25 @@ private final class LoadingLabViewModel {
     func toggleAutomaticLoading() {
         if isRunningAutomatically {
             pauseAutomaticLoading()
+            record(
+                title: "Automatic loading paused",
+                detail: "The active request remains in its current stage.",
+                systemImage: "pause.fill"
+            )
         } else {
             runAutomatically()
         }
+    }
+
+    func setShouldFail(_ shouldFail: Bool) {
+        self.shouldFail = shouldFail
+        record(
+            title: shouldFail ? "Failure enabled" : "Success enabled",
+            detail: shouldFail
+                ? "The next completed request will emit an offline failure."
+                : "The next completed request will install a new live response.",
+            systemImage: shouldFail ? "exclamationmark.triangle" : "checkmark.circle"
+        )
     }
 
     func deleteCache() {
@@ -241,6 +323,11 @@ private final class LoadingLabViewModel {
         requestIsActive = false
         requestStage = .idle
         entries.reset()
+        record(
+            title: "Cache deleted",
+            detail: "The next in-flight request will render placeholder rows.",
+            systemImage: "trash"
+        )
     }
 
     func restoreCache() {
@@ -248,11 +335,26 @@ private final class LoadingLabViewModel {
         requestIsActive = false
         requestStage = .idle
         useCase.finish(with: .success(SampleEntry.cached))
+        record(
+            title: "Sample cache restored",
+            detail: "The cached response is available for the next loading transition.",
+            systemImage: "internaldrive"
+        )
+    }
+
+    func clearHistory() {
+        events.removeAll()
+        nextEventID = 0
     }
 
     private func runAutomatically() {
         beginRequestIfNeeded()
         isRunningAutomatically = true
+        record(
+            title: "Automatic completion scheduled",
+            detail: "The request will finish in \(duration.formatted(.number.precision(.fractionLength(1)))) seconds.",
+            systemImage: "timer"
+        )
 
         automaticTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -278,9 +380,17 @@ private final class LoadingLabViewModel {
     }
 
     private func beginRequest() {
+        let hadCache = entries.latest != nil
         requestIsActive = true
         requestStage = .inFlight
         context.reload(entries)
+        record(
+            title: "Request started",
+            detail: hadCache
+                ? "The cached rows remain visible while the request is in flight."
+                : "No cached value is available, so placeholder rows are visible.",
+            systemImage: "arrow.trianglehead.2.clockwise"
+        )
     }
 
     private func finishRequest() {
@@ -290,8 +400,21 @@ private final class LoadingLabViewModel {
         pauseAutomaticLoading()
         if shouldFail {
             useCase.finish(with: .failure(.offline))
+            record(
+                title: "Request failed",
+                detail: entries.latest == nil
+                    ? "No cached value is available, so the failure view replaces the placeholders."
+                    : "The cached rows remain visible after the failure.",
+                systemImage: "exclamationmark.triangle"
+            )
         } else {
-            useCase.finish(with: .success(nextResponse()))
+            let response = nextResponse()
+            useCase.finish(with: .success(response))
+            record(
+                title: "Request succeeded",
+                detail: "The response installed \(response.count) live rows.",
+                systemImage: "checkmark.circle"
+            )
         }
     }
 
@@ -302,6 +425,33 @@ private final class LoadingLabViewModel {
             useCase.finish(with: .success(latest))
         } else {
             entries.reset()
+        }
+        record(
+            title: "Returned to idle",
+            detail: entries.latest == nil
+                ? "The response remains empty until another request begins."
+                : "The latest response remains available without an active request.",
+            systemImage: "pause.circle"
+        )
+    }
+
+    private func record(
+        title: String,
+        detail: String,
+        systemImage: String
+    ) {
+        nextEventID += 1
+        events.insert(
+            LoadingLabEvent(
+                id: nextEventID,
+                title: title,
+                detail: detail,
+                systemImage: systemImage
+            ),
+            at: 0
+        )
+        if events.count > 20 {
+            events.removeLast(events.count - 20)
         }
     }
 

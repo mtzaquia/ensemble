@@ -164,6 +164,8 @@ struct SampleInlineFailure: View {
     let retry: ViewDataRetryAction?
     let identifier: String
 
+    @State var isRetrying = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Label(title, systemImage: "exclamationmark.triangle")
@@ -174,8 +176,17 @@ struct SampleInlineFailure: View {
                 .foregroundStyle(.secondary)
 
             if let retry {
-                Button("Try again") {
+                Button {
+                    isRetrying = true
                     retry()
+                } label: {
+                    HStack {
+                        Text("Try again")
+                        
+                        if isRetrying {
+                            ProgressView()
+                        }
+                    }
                 }
                 .accessibilityIdentifier(SampleAppAccessibility.failureRetry(identifier))
             }

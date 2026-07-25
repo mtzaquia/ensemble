@@ -37,7 +37,10 @@ public enum AsyncContentSource: Hashable, Sendable {
 
 /// Controls what ``AsyncContent`` renders while its data is loading.
 public enum AsyncContentLoadingPolicy<Value> {
-    /// Renders no content while the data is loading.
+    /// Renders no successful or placeholder content while the data is loading.
+    ///
+    /// When loading begins from a presented failure, that failure remains visible until the
+    /// destination receives another result.
     case hidden
 
     /// Renders the latest successful value when one exists, and otherwise renders no content.
@@ -90,7 +93,7 @@ private enum AsyncContentFailureRendering {
 
 // Keep every value-backed phase in one case so SwiftUI preserves the content subtree when the
 // source changes between live, cached, and placeholder presentations.
-private enum AsyncContentRendering<Value> {
+enum AsyncContentRendering<Value> {
     case hidden
     case content(Value, AsyncContentSource)
     case failure(any Error)
@@ -217,7 +220,7 @@ public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
     }
 }
 
-private extension AsyncContent {
+extension AsyncContent {
     var rendering: AsyncContentRendering<Value> {
         switch data.phase {
         case .empty:
@@ -225,6 +228,7 @@ private extension AsyncContent {
         case .loading:
             loadingPolicy.presentation(latest: data.latest)
                 .map { .content($0.value, $0.source) }
+                ?? retainedFailureRendering
                 ?? .hidden
         case .success:
             data.latest.map { .content($0, .live) } ?? .hidden
@@ -237,6 +241,19 @@ private extension AsyncContent {
             case .replace:
                 .failure(error)
             }
+        }
+    }
+
+    private var retainedFailureRendering: AsyncContentRendering<Value>? {
+        guard let error = data.loadingFailure else { return nil }
+
+        return switch failureRendering {
+        case .hidden:
+            nil
+        case .cached where data.latest != nil:
+            nil
+        case .cached, .replace:
+            .failure(error)
         }
     }
 }

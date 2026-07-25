@@ -17,8 +17,9 @@ successful value; a thrown error enters failure while preserving any previous su
 The method consumes the error into presentation state rather than rethrowing it.
 
 A load follows the lifetime of the task awaiting it. Cancellation is not presented as a failure:
-when no later update has replaced that load's loading transition, cancellation settles to cached
-success if a value exists and to empty otherwise. A load does not install a retry action.
+when no later update has replaced that load's loading transition, cancellation restores a failure
+that preceded loading, settles to cached success if a value exists, or settles to empty. A load
+does not install a retry action.
 
 A load and binding can feed the same destination in tandem. Starting either one does not cancel the
 other, and their accepted updates are applied in arrival order:
@@ -134,7 +135,11 @@ Calling it performs the same operation as `context.reload(entries)`. A resubscri
 
 ## Handle completion and cancellation
 
-When a stream finishes without emitting while the destination is loading, the context settles the state to success if a latest value exists and to empty otherwise. If the stream already emitted a success or failure, that phase remains visible. A later `.refresh` reload re-establishes a completed subscription before it invokes the producer action.
+When a stream finishes without emitting while the destination is loading, the context restores a
+failure that preceded loading. Without a retained failure, it settles the state to success if a
+latest value exists and to empty otherwise. If the stream already emitted a success or failure,
+that phase remains visible. A later `.refresh` reload re-establishes a completed subscription
+before it invokes the producer action.
 
 Cancel one binding when its destination should stop receiving updates:
 
@@ -142,7 +147,9 @@ Cancel one binding when its destination should stop receiving updates:
 context.cancel(entries)
 ```
 
-Cancellation removes the retry action. A destination cancelled while loading settles to cached success or empty using the same rule as completion; an existing success or failure phase is preserved.
+Cancellation removes the retry action. A destination cancelled while loading restores the failure
+that preceded loading, settles to cached success, or settles to empty using the same rule as
+completion. An existing success or failure phase is preserved.
 
 Cancel every binding explicitly with `cancelAll()`, or release the context. Its deinitializer cancels all subscriptions it still owns.
 

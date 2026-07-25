@@ -98,6 +98,7 @@ public final class ViewData<Value> {
     var retryAction: ViewDataRetryAction?
     @ObservationIgnored private var nextLoadingToken: UInt = 0
     @ObservationIgnored private var currentLoadingToken: UInt?
+    @ObservationIgnored private(set) var loadingFailure: (any Error)?
 
     /// Creates empty presentation state.
     public init() {
@@ -121,6 +122,7 @@ public final class ViewData<Value> {
 
     func set(_ value: Value) {
         currentLoadingToken = nil
+        loadingFailure = nil
         latest = value
         phase = .success
         advanceAnimationValue()
@@ -137,6 +139,7 @@ public final class ViewData<Value> {
 
     func fail(_ error: any Error) {
         currentLoadingToken = nil
+        loadingFailure = nil
         phase = .failure(error)
         advanceAnimationValue()
     }
@@ -145,6 +148,13 @@ public final class ViewData<Value> {
     func beginLoading() -> UInt {
         nextLoadingToken &+= 1
         currentLoadingToken = nextLoadingToken
+        if case .failure(let error) = phase {
+            loadingFailure = error
+        } else if case .loading = phase {
+            // Keep a failure retained by an overlapping or repeated reload.
+        } else {
+            loadingFailure = nil
+        }
         phase = .loading
         advanceAnimationValue()
         return nextLoadingToken
@@ -157,6 +167,7 @@ public final class ViewData<Value> {
     /// stop as well, and cancel the task awaiting ``ViewDataContext/load(_:to:)`` to stop a load.
     public func reset() {
         currentLoadingToken = nil
+        loadingFailure = nil
         latest = nil
         phase = .empty
         advanceAnimationValue()
@@ -178,7 +189,12 @@ extension ViewData {
     func finishLoading(_ token: UInt) {
         guard currentLoadingToken == token else { return }
         currentLoadingToken = nil
-        phase = latest == nil ? .empty : .success
+        if let loadingFailure {
+            self.loadingFailure = nil
+            phase = .failure(loadingFailure)
+        } else {
+            phase = latest == nil ? .empty : .success
+        }
         advanceAnimationValue()
     }
 

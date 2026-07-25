@@ -50,6 +50,15 @@ nonisolated final class SampleAppUITests: XCTestCase {
         requestStage.buttons["Finished"].tap()
 
         XCTAssertTrue(element(A11y.entry(101)).waitForExistence(timeout: 3))
+
+        let succeededEvent = app.staticTexts["Request succeeded"]
+        scrollUntilHittable(succeededEvent, direction: .up, attempts: 10)
+        XCTAssertTrue(succeededEvent.exists)
+
+        let clearHistory = app.buttons["Clear history"]
+        scrollUntilHittable(clearHistory, direction: .up, attempts: 10)
+        clearHistory.tap()
+        XCTAssertFalse(succeededEvent.exists)
     }
 
     @MainActor

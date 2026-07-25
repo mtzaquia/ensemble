@@ -8,9 +8,14 @@ Pass an `AsyncContentLoadingPolicy` through the `loading` argument:
 
 | Policy | Rendering while loading | Content source |
 | --- | --- | --- |
-| `.hidden` | Nothing | — |
+| `.hidden` | No successful or placeholder content | — |
 | `.cached` | The latest successful value when one exists; otherwise nothing | `.cached` |
 | `.placeholder(value)` | The latest successful value when one exists; otherwise the supplied placeholder | `.cached` or `.placeholder` |
+
+Loading policies control the successful-content builder; they do not hide a failure builder that
+was already presented. With `.hidden`, an initial load renders nothing, but retrying a replacement
+failure keeps that failure visible until the source succeeds or fails again. If a loading policy
+can supply cached or placeholder content, that content replaces the failure during the retry.
 
 The default is `.cached`. Before the first successful value it renders nothing; on later loads it keeps the latest successful value visible. Use `.placeholder(value)` to show a skeleton on the first load while retaining useful content during refresh. Placeholder values are presentation input rather than successful data: Ensemble does not store them in `ViewData.latest`.
 
@@ -97,7 +102,7 @@ When omitting the failure builder, the initializer instead accepts `AsyncContent
 
 The default is `.cached`. The separate policy types make invalid combinations unavailable: `.replace` requires failure content, while `.hidden` cannot be paired with an unreachable failure builder.
 
-The retry action is optional and uses the [reload behavior](sources-and-lifecycle.md#choose-binding-reload-behavior) configured when the destination was bound: `.resubscribe` replaces a cold source, while `.refresh(action)` signals a hot or long-lived producer without replacing its active subscription. It is available while a `ViewDataContext` owns a reload-enabled binding, including after the stream finishes. A load does not install its own retry action. Retry is absent when no reload-enabled binding owns the destination, when the binding uses `.disabled`, or after the binding is cancelled.
+The retry action is optional and uses the [reload behavior](sources-and-lifecycle.md#choose-binding-reload-behavior) configured when the destination was bound: `.resubscribe` replaces a cold source, while `.refresh(action)` signals a hot or long-lived producer without replacing its active subscription. It is available while a `ViewDataContext` owns a reload-enabled binding, including after the stream finishes. Retrying marks the destination as loading; when the loading policy has no content to present, the current failure remains visible until the source emits its next result. A load does not install its own retry action. Retry is absent when no reload-enabled binding owns the destination, when the binding uses `.disabled`, or after the binding is cancelled.
 
 ## Scope policies to UI chunks
 

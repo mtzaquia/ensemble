@@ -26,8 +26,9 @@ import Testing
 
 @Suite("Async content")
 struct AsyncContentTests {
-    enum TestError: Error {
+    enum TestError: Error, Equatable {
         case expected
+        case replacement
     }
 
     @Test("The content and failure builder API composes")
@@ -85,5 +86,77 @@ struct AsyncContentTests {
 
         #expect(presentation?.value == 20)
         #expect(presentation?.source == .cached)
+    }
+
+    @Test("Hidden loading content retains a replacement failure during retry")
+    func hiddenLoadingRetainsReplacementFailure() throws {
+        let data = ViewData<Int>()
+        let content = AsyncContent(
+            data,
+            loading: .hidden,
+            failure: .replace
+        ) { value, _ in
+            Text("\(value)")
+        } failure: { error, _ in
+            Text(error.localizedDescription)
+        }
+
+        data.fail(TestError.expected)
+        data.beginLoading()
+
+        let retryError = try #require(content.rendering.failure as? TestError)
+        #expect(retryError == .expected)
+
+        data.set(42)
+
+        let success = try #require(content.rendering.content)
+        #expect(success.value == 42)
+        #expect(success.source == .live)
+
+        data.fail(TestError.expected)
+        data.beginLoading()
+        data.fail(TestError.replacement)
+
+        let replacementError = try #require(content.rendering.failure as? TestError)
+        #expect(replacementError == .replacement)
+    }
+
+    @Test("A placeholder replaces a failure while retrying")
+    func placeholderReplacesRetryingFailure() throws {
+        let data = ViewData<Int>()
+        let content = AsyncContent(
+            data,
+            loading: .placeholder(10),
+            failure: .replace
+        ) { value, _ in
+            Text("\(value)")
+        } failure: { error, _ in
+            Text(error.localizedDescription)
+        }
+
+        data.fail(TestError.expected)
+        data.beginLoading()
+
+        let presentation = try #require(content.rendering.content)
+        #expect(presentation.value == 10)
+        #expect(presentation.source == .placeholder)
+    }
+}
+
+private extension AsyncContentRendering {
+    var content: (value: Value, source: AsyncContentSource)? {
+        if case .content(let value, let source) = self {
+            (value, source)
+        } else {
+            nil
+        }
+    }
+
+    var failure: (any Error)? {
+        if case .failure(let error) = self {
+            error
+        } else {
+            nil
+        }
     }
 }

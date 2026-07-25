@@ -53,8 +53,9 @@ public final class ViewDataContext {
     ///
     /// Loading begins before `operation` is called. A returned value becomes the destination's
     /// latest successful value, while a thrown error enters failure and preserves any latest value.
-    /// Cancellation is not presented as a failure; it settles this load's loading transition to
-    /// cached success or empty when no later update has replaced that transition.
+    /// Cancellation is not presented as a new failure; it restores a failure that preceded loading,
+    /// settles to cached success, or settles to empty when no later update has replaced this load's
+    /// loading transition.
     ///
     /// A load does not cancel or replace a binding for the same destination. Load completions and
     /// bound results are accepted in arrival order. The load follows the lifetime of the caller's
@@ -95,8 +96,9 @@ public final class ViewDataContext {
     /// Binding begins immediately and changes `destination` to loading. Successful and failed
     /// elements update the destination without ending the subscription, so a source can recover
     /// by emitting a later success. If the sequence completes before emitting, a destination still
-    /// loading settles to success when cached data exists and to empty otherwise. Completion after
-    /// an emitted success or failure preserves that phase.
+    /// loading restores the failure that preceded loading, settles to success when cached data
+    /// exists, or settles to empty otherwise. Completion after an emitted success or failure
+    /// preserves that phase.
     ///
     /// The factory is invoked synchronously during binding and retained for reloads that need a new
     /// subscription. A method reference strongly retains its instance.
@@ -160,9 +162,10 @@ public final class ViewDataContext {
 
     /// Cancels and removes the binding for a destination.
     ///
-    /// If the destination was loading, it returns to success when cached data exists and to empty
-    /// otherwise. Existing success or failure presentation state is preserved. Cancellation also
-    /// removes the retry action associated with the binding.
+    /// If the destination was loading, it restores the failure that preceded loading, returns to
+    /// success when cached data exists, or returns to empty otherwise. Existing success or failure
+    /// presentation state is preserved. Cancellation also removes the retry action associated with
+    /// the binding.
     ///
     /// - Parameter destination: The presentation state whose binding should stop.
     public func cancel<Value>(_ destination: ViewData<Value>) {
