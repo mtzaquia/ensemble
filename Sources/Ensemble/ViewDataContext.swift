@@ -141,7 +141,7 @@ public final class ViewDataContext {
     ///
     /// The factory is invoked synchronously during binding and retained for reloads that need a new
     /// observation stream. Each invocation should return a fresh stream, such as one created with
-    /// ``AsyncStream/observing(emissions:)``.
+    /// ``AsyncStream/observing(resetValue:emissions:)``.
     ///
     /// - Parameters:
     ///   - makeSource: A factory that promptly creates an observation stream for the initial binding

@@ -53,8 +53,9 @@ The later success replaces `latest` and moves the destination back to success. A
 
 ## Observe a stateful source
 
-Use `AsyncStream.observing(emissions:)` when the source already exposes observable state, such as a
-persistence bucket. Its closure maps the source's current state to one of three explicit decisions:
+Use `AsyncStream.observing(resetValue:emissions:)` when the source exposes an observable reset
+value. The initial value establishes the subscription baseline; later changes emit `.reset`
+automatically. The emission closure maps the source's current state to a decision:
 
 | Decision | Effect |
 | --- | --- |
@@ -70,7 +71,7 @@ returns `.skip`, leaving a newly bound destination loading. The latter returns
 func values() -> AsyncStream<
   ObservationEmission<Result<[Entry], EntryFailure>>
 > {
-  AsyncStream.observing {
+  AsyncStream.observing(resetValue: source.resetValue) {
     source.emission
   }
 }
@@ -78,11 +79,10 @@ func values() -> AsyncStream<
 context.bind(useCase.values, to: entries)
 ```
 
-The observation closure runs immediately on the main actor and is reevaluated when any observable
-property it read changes. `.skip` is a decision, not a stream element: the helper waits rather than
-emitting it. `.reset` is emitted and then the closure is reevaluated immediately, so replacement
-state already available in the same change is delivered after the reset. If reevaluation returns
-`.reset` again, the helper waits for another observed change instead of spinning.
+The reset expression and emission closure run on the main actor and are reevaluated when observed
+state changes. `.skip` is a decision, not a stream element: the helper waits rather than emitting
+it. After a reset, immediate reevaluation delivers replacement state already available in the same
+change.
 
 Resetting presentation does not cancel the binding or remove its retry action. A later
 `.yield(result)` continues updating the same destination.

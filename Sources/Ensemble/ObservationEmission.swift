@@ -45,6 +45,10 @@ public enum ObservationEmission<Element> {
 extension ObservationEmission: Equatable where Element: Equatable {}
 extension ObservationEmission: Sendable where Element: Sendable {}
 
+nonisolated private enum ObservationResetBaseline: Equatable, Sendable {
+    case constant
+}
+
 public extension AsyncStream {
     /// Creates a stream by repeatedly evaluating a main actor-isolated observation.
     ///
@@ -70,12 +74,36 @@ public extension AsyncStream {
         emissions: @escaping @MainActor @Sendable () ->
             ObservationEmission<ObservedElement>
     ) -> Self where Element == ObservationEmission<ObservedElement> {
-        Self { continuation in
+        observing(
+            resetValue: ObservationResetBaseline.constant,
+            emissions: emissions
+        )
+    }
+
+    /// Creates an observed stream that emits a reset when a comparison value changes.
+    ///
+    /// The initial reset value establishes the subscription baseline and does not emit. When the
+    /// value changes, the stream emits ``ObservationEmission/reset`` and immediately reevaluates.
+    ///
+    /// - Parameters:
+    ///   - resetValue: A side-effect-free observable comparison expression.
+    ///   - emissions: A closure that reads observable state and decides what to emit.
+    /// - Returns: A fresh stream of yielded elements and reset instructions.
+    @MainActor
+    static func observing<ObservedElement: Sendable, ResetValue: Equatable & Sendable>(
+        resetValue: @autoclosure @escaping @MainActor @Sendable () -> ResetValue,
+        emissions: @escaping @MainActor @Sendable () ->
+            ObservationEmission<ObservedElement>
+    ) -> Self where Element == ObservationEmission<ObservedElement> {
+        let initialResetValue = resetValue()
+
+        return Self { continuation in
             let producer = Task { @MainActor in
                 let (changes, changeContinuation) = AsyncStream<Void>.makeStream(
                     bufferingPolicy: .bufferingNewest(1)
                 )
                 var changeIterator = changes.makeAsyncIterator()
+                var handledResetValue = initialResetValue
                 var isImmediateResetEvaluation = false
 
                 defer {
@@ -84,10 +112,19 @@ public extension AsyncStream {
                 }
 
                 while Task.isCancelled == false {
-                    let emission = withObservationTracking {
-                        emissions()
+                    let (currentResetValue, emission) = withObservationTracking {
+                        (resetValue(), emissions())
                     } onChange: {
                         changeContinuation.yield()
+                    }
+
+                    if currentResetValue != handledResetValue {
+                        handledResetValue = currentResetValue
+                        if case .terminated = continuation.yield(.reset) {
+                            return
+                        }
+                        isImmediateResetEvaluation = true
+                        continue
                     }
 
                     switch emission {

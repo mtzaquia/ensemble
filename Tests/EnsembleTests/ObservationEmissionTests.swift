@@ -33,9 +33,6 @@ struct ObservationEmissionTests {
         var resetRevision = 0
 
         @ObservationIgnored
-        var handledResetRevision = 0
-
-        @ObservationIgnored
         var evaluationCount = 0
     }
 
@@ -72,13 +69,10 @@ struct ObservationEmissionTests {
     @Test("Reset is delivered before a same-turn replacement")
     func resetPrecedesReplacement() async {
         let model = Model()
-        let stream = AsyncStream<ObservationEmission<Int>>.observing {
-            let resetRevision = model.resetRevision
-            if resetRevision != model.handledResetRevision {
-                model.handledResetRevision = resetRevision
-                return .reset
-            }
-            return .yield(model.value)
+        let stream = AsyncStream<ObservationEmission<Int>>.observing(
+            resetValue: model.resetRevision
+        ) {
+            .yield(model.value)
         }
         var iterator = stream.makeAsyncIterator()
 
@@ -86,6 +80,37 @@ struct ObservationEmissionTests {
 
         model.resetRevision += 1
         model.value = 42
+        #expect(await iterator.next() == .reset)
+        #expect(await iterator.next() == .yield(42))
+    }
+
+    @Test("The current reset value establishes the subscription baseline")
+    func currentResetValueDoesNotReplay() async {
+        let model = Model()
+        model.resetRevision = 42
+        let stream = AsyncStream<ObservationEmission<Int>>.observing(
+            resetValue: model.resetRevision
+        ) {
+            .yield(model.value)
+        }
+        var iterator = stream.makeAsyncIterator()
+
+        #expect(await iterator.next() == .yield(0))
+    }
+
+    @Test("A reset after stream creation is not absorbed into the baseline")
+    func resetAfterStreamCreation() async {
+        let model = Model()
+        let stream = AsyncStream<ObservationEmission<Int>>.observing(
+            resetValue: model.resetRevision
+        ) {
+            .yield(model.value)
+        }
+
+        model.resetRevision += 1
+        model.value = 42
+        var iterator = stream.makeAsyncIterator()
+
         #expect(await iterator.next() == .reset)
         #expect(await iterator.next() == .yield(42))
     }
