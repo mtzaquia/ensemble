@@ -51,6 +51,42 @@ continuation.yield(.success(recoveredEntries))
 
 The later success replaces `latest` and moves the destination back to success. A source may instead finish after either result when it represents one request per subscription.
 
+## Observe a stateful source
+
+Use `AsyncStream.observing(emissions:)` when the source already exposes observable state, such as a
+persistence bucket. Its closure maps the source's current state to one of three explicit decisions:
+
+| Decision | Effect |
+| --- | --- |
+| `.skip` | Emit nothing and wait for another observed change |
+| `.yield(result)` | Deliver a success or failure to the bound `ViewData` |
+| `.reset` | Return the bound `ViewData` to its initial empty state |
+
+This keeps “not loaded yet” distinct from “loaded successfully with an empty value.” The former
+returns `.skip`, leaving a newly bound destination loading. The latter returns
+`.yield(.success([]))`, moving it to successful presentation with an empty collection.
+
+```swift
+func values() -> AsyncStream<
+  ObservationEmission<Result<[Entry], EntryFailure>>
+> {
+  AsyncStream.observing {
+    source.emission
+  }
+}
+
+context.bind(useCase.values, to: entries)
+```
+
+The observation closure runs immediately on the main actor and is reevaluated when any observable
+property it read changes. `.skip` is a decision, not a stream element: the helper waits rather than
+emitting it. `.reset` is emitted and then the closure is reevaluated immediately, so replacement
+state already available in the same change is delivered after the reset. If reevaluation returns
+`.reset` again, the helper waits for another observed change instead of spinning.
+
+Resetting presentation does not cancel the binding or remove its retry action. A later
+`.yield(result)` continues updating the same destination.
+
 ## Choose binding reload behavior
 
 Choose reload behavior based on the source's lifetime. The binding's `ViewDataReloadBehavior`

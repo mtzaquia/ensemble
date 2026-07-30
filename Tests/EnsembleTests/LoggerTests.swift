@@ -46,6 +46,9 @@ struct LoggerTests {
             EnsembleLogEvent.bindingReceivedValue(destination: destination).logLevel == .trace
         )
         #expect(
+            EnsembleLogEvent.bindingReceivedReset(destination: destination).logLevel == .trace
+        )
+        #expect(
             EnsembleLogEvent.bindingCompleted(destination: destination).logLevel == .trace
         )
     }
@@ -62,5 +65,10 @@ struct LoggerTests {
         #expect(message.contains("[bind] → started"))
         #expect(message.contains("destination=\(destination)"))
         #expect(message.contains("reload=refresh"))
+
+        let resetMessage =
+            EnsembleLogEvent.bindingReceivedReset(destination: destination).message
+        #expect(resetMessage.contains("[bind] • received reset"))
+        #expect(resetMessage.contains("destination=\(destination)"))
     }
 }
