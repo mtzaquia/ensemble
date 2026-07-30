@@ -55,41 +55,56 @@ The later success replaces `latest` and moves the destination back to success. A
 finish after either result when it represents one request per subscription. If iteration itself
 throws, the terminal error enters failure.
 
-## Bind a reset-aware source
+## Adapt a source-specific update type
 
-Use the generic `bind(_:to:reload:receive:)` overload when a source has its own
-update type:
-
-| Update | Effect |
-| --- | --- |
-| `.result(result)` | Deliver a success or failure to the bound `ViewData` |
-| `.reset` | Return the bound `ViewData` to its initial empty state |
-
-The source owns observation and decides when to emit. Silence leaves presentation unchanged, so
-“not loaded yet” produces no element, while “loaded successfully but empty” emits
-`.result(.success([]))`.
+`bind(_:to:reload:receive:)` is the integration point for a source with its own update protocol.
+Wrap it once in a constrained overload instead of translating updates at every feature call site:
 
 ```swift
-enum EntryUpdate {
-  case result(Result<[Entry], EntryFailure>)
+enum RepositoryUpdate<Value: Sendable>: Sendable {
+  case result(Result<Value, any Error>)
   case reset
 }
 
-context.bind(useCase.updates, to: entries) { update, sink in
-  switch update {
-  case .result(let result):
-    sink.receive(result)
-  case .reset:
-    sink.reset()
+extension ViewDataContext {
+  func bind<Value: Sendable, Source>(
+    _ makeSource: @escaping @MainActor @Sendable () -> Source,
+    to destination: ViewData<Value>,
+    refresh: @escaping @MainActor @Sendable () -> Void
+  ) where
+    Source: AsyncSequence,
+    Source.Element == RepositoryUpdate<Value>
+  {
+    bind(makeSource, to: destination, reload: .refresh(refresh)) { update, sink in
+      switch update {
+      case .result(let result):
+        sink.receive(result)
+      case .reset:
+        sink.reset()
+      }
+    }
   }
 }
 ```
 
-Resetting presentation does not cancel the binding or remove its retry action. A later
-`.result(result)` continues updating the same destination. The receive closure runs only after
-Ensemble confirms that the element belongs to the active binding. The supplied sink performs that
-check again whenever it is called, so even a retained sink cannot update a replaced or cancelled
-binding.
+The overload translates the source vocabulary and chooses its reload contract. This example
+requires a refresh action because the repository stream is hot; an adapter for a cold source can
+use `.resubscribe` instead.
+
+Feature code now uses the source-specific overload directly:
+
+```swift
+context.bind(
+  { repository.updates() },
+  to: entries,
+  refresh: { repository.refresh() }
+)
+```
+
+The source owns observation. Emitting no element leaves presentation unchanged, while a successful
+empty collection remains distinguishable through `.result(.success([]))`. A reset clears
+presentation without ending the binding or removing retry availability. Sink actions are ignored
+after the binding is replaced or cancelled.
 
 ## Choose binding reload behavior
 
@@ -105,34 +120,27 @@ defines what both programmatic reload and failure retry do:
 `.resubscribe` is the default and fits cold, request-per-subscription sources:
 
 ```swift
-func load() {
-  context.bind(useCase.values, to: entries)
-}
-
-func reload() {
-  context.reload(entries)
-}
+context.bind(useCase.values, to: entries)
 ```
 
-For a hot source, bind its long-lived stream once and tell the context how to ask its producer for another value:
+For a hot source, retain its subscription and tell the context how to signal its producer:
 
 ```swift
-func load() {
-  context.bind(
-    useCase.values,
-    to: entries,
-    reload: .refresh(useCase.reload)
-  )
-}
-
-func reload() {
-  context.reload(entries)
-}
+context.bind(
+  useCase.values,
+  to: entries,
+  reload: .refresh(useCase.reload)
+)
 ```
 
-Both behaviors mark `entries` as loading before starting the reload. `.refresh` leaves an active subscription in place. If that sequence has already completed, the context creates another sequence before calling the refresh action, so the new result still has a consumer. The refresh action must publish into the sequence returned by the factory; an `AsyncStream` that deliberately discards values before iteration should coordinate or buffer that initial publication itself.
+`context.reload(entries)` and the retry action exposed to failure UI use the configured behavior.
+Both mark `entries` as loading. `.refresh` leaves an active subscription in place; if it has
+completed, the context creates another before invoking the action. That action must publish into
+the sequence returned by the factory.
 
-The context retains the source factory and any refresh action. A method reference strongly retains its instance. A reference such as `useCase.values` is appropriate when the use case should live with the context. Do not pass a method on an object that also owns the context, because that creates a retain cycle; use a separate source object or an intentional weak capture instead.
+The context retains the source factory and refresh action. A method reference therefore retains its
+instance. Avoid passing a method on an owner that also retains the context unless that cycle is
+intentional.
 
 ## Seed and reset state
 
@@ -142,7 +150,8 @@ Initialize `ViewData` with a value when useful content exists before any source 
 let entries = ViewData(cachedEntries)
 ```
 
-The initial phase is successful. If a load or source starts later, the seeded value remains available as cached content while loading or after failure.
+The initial phase is successful. If a load or source starts later, the seeded value remains
+available as cached content while loading or after failure.
 
 Reset presentation when both the lifecycle phase and cached value should be discarded:
 
@@ -153,25 +162,6 @@ entries.reset()
 Reset does not cancel an active load or binding. A later accepted update can replace the empty
 state. Use `ViewDataContext.cancel(_:)` when the binding should stop, and cancel the task awaiting
 `load(_:to:)` when the one-shot operation should stop.
-
-## Retry with the configured reload behavior
-
-The failure builder receives an optional `ViewDataRetryAction`:
-
-```swift
-} failure: { error, retry in
-  VStack {
-    Text(error.localizedDescription)
-    if let retry {
-      Button("Try again") {
-        retry()
-      }
-    }
-  }
-}
-```
-
-Calling it performs the same operation as `context.reload(entries)`. A resubscribing binding cancels and replaces its sequence; a refreshing binding keeps its active sequence and signals the producer. Results from a sequence replaced by resubscription are ignored even if its producer emits after cancellation.
 
 ## Handle completion and cancellation
 
@@ -191,8 +181,10 @@ Cancellation removes the retry action. A destination cancelled while loading res
 that preceded loading, settles to cached success, or settles to empty using the same rule as
 completion. An existing success or failure phase is preserved.
 
-Cancel every binding explicitly with `cancelAll()`, or release the context. Its deinitializer cancels all subscriptions it still owns.
+Cancel every binding explicitly with `cancelAll()`, or release the context. Its deinitializer
+cancels all subscriptions it still owns.
 
-Rebinding a destination is equivalent to cancelling its current registration before starting the replacement. Other destinations owned by the same context are unaffected.
+Rebinding a destination cancels its current registration before starting the replacement. Other
+destinations owned by the same context are unaffected.
 
-Next: [Getting started](getting-started.md) · [Presentation policies](presentation-policies.md)
+Next: [Presentation policies](presentation-policies.md) · [Diagnostics](diagnostics.md)

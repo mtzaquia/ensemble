@@ -20,11 +20,10 @@
 //  SOFTWARE.
 //
 
-/// Applies an accepted binding update to its presentation state.
+/// Applies a source-specific binding update to presentation state.
 ///
 /// Ensemble supplies a sink to the custom ``ViewDataContext/bind(_:to:reload:receive:)`` handler.
-/// Actions are applied only while that binding remains active. A sink retained beyond the handler
-/// is safe to call, but its actions are ignored after the binding is replaced or cancelled.
+/// Its actions are ignored after that binding is replaced or cancelled.
 @MainActor
 public struct ViewDataSink<Value> {
     enum Action {

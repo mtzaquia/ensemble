@@ -102,7 +102,11 @@ When omitting the failure builder, the initializer instead accepts `AsyncContent
 
 The default is `.cached`. The separate policy types make invalid combinations unavailable: `.replace` requires failure content, while `.hidden` cannot be paired with an unreachable failure builder.
 
-The retry action is optional and uses the [reload behavior](sources-and-lifecycle.md#choose-binding-reload-behavior) configured when the destination was bound: `.resubscribe` replaces a cold source, while `.refresh(action)` signals a hot or long-lived producer without replacing its active subscription. It is available while a `ViewDataContext` owns a reload-enabled binding, including after the stream finishes. Retrying marks the destination as loading; when the loading policy has no content to present, the current failure remains visible until the source emits its next result. A load does not install its own retry action. Retry is absent when no reload-enabled binding owns the destination, when the binding uses `.disabled`, or after the binding is cancelled.
+The optional retry action uses the configured
+[reload behavior](sources-and-lifecycle.md#choose-binding-reload-behavior). It remains available
+while a `ViewDataContext` owns a reload-enabled binding, including after its sequence completes.
+Retrying marks the destination as loading; a load does not install its own retry action. Retry is
+absent for `.disabled` bindings and after cancellation.
 
 ## Scope policies to UI chunks
 

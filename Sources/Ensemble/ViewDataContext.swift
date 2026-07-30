@@ -130,13 +130,13 @@ public final class ViewDataContext {
 
     /// Binds an asynchronous sequence with application-defined element handling.
     ///
-    /// Binding, completion, cancellation, reload, and retry follow the same lifecycle as the
-    /// result-sequence overload. `receive` runs on the main actor only after Ensemble verifies that
-    /// the element belongs to the destination's active binding. Use the supplied ``ViewDataSink``
-    /// to deliver a result or reset presentation state without ending the binding.
+    /// This is the extension point for source-specific update types. Add a constrained `bind`
+    /// overload that forwards here and translates each element with the supplied ``ViewDataSink``.
+    /// Binding, completion, cancellation, reload, and retry retain their standard behavior.
     ///
-    /// The factory is invoked synchronously during binding and retained for reloads that need a new
-    /// sequence. Each invocation should return a sequence ready for another subscription.
+    /// `receive` runs on the main actor after Ensemble confirms that the element belongs to the
+    /// active binding. The factory is invoked synchronously and retained for reloads that need
+    /// another subscription.
     ///
     /// - Parameters:
     ///   - makeSource: A factory that promptly creates a sequence for the initial binding

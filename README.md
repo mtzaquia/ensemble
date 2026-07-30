@@ -1,6 +1,7 @@
 # 👯 Ensemble
 
-`Ensemble` is a lightweight framework for composing self-contained, reloadable SwiftUI features.
+`Ensemble` is a SwiftUI presentation-state library for composing self-contained, reloadable
+features.
 
 A `ViewData` value remembers the latest successful data and its current lifecycle phase.
 A `ViewDataContext` feeds it from one-shot asynchronous operations or asynchronous sequences,
@@ -24,7 +25,8 @@ AsyncContent(viewModel.entries) { entries, _ in
 
 ## Install
 
-Ensemble requires Swift 6.3 and supports iOS 17+ and macOS 14+. It is available through Swift Package Manager.
+Ensemble requires Swift 6.3 and supports iOS 17+ and macOS 14+. It is available through Swift
+Package Manager.
 
 ```swift
 dependencies: [
@@ -62,6 +64,7 @@ final class EntriesUseCase {
   }
 }
 
+@MainActor
 final class EntriesViewModel {
   let entries = ViewData<[Entry]>()
 
@@ -72,13 +75,14 @@ final class EntriesViewModel {
     self.useCase = useCase
   }
 
-  func load() {
-    context.bind(useCase.values, to: entries)
+  func start() {
+    context.bind({ useCase.values() }, to: entries)
   }
 }
 ```
 
-`ViewData` is observable, so the surrounding view model does not need observation solely to expose it. Render the value with `AsyncContent` and start the binding from a stable ancestor:
+`ViewData` is observable, so the surrounding view model does not need observation solely to expose
+it. Render the value with `AsyncContent` and start the binding from a stable ancestor:
 
 ```swift
 import SwiftUI
@@ -99,28 +103,35 @@ struct EntriesView: View {
       }
     }
     .task {
-      viewModel.load()
+      viewModel.start()
     }
   }
 }
 ```
 
-With this minimal overload, loading and failure render nothing until a successful value exists. After the first success, both retain that latest value. Add placeholder or failure UI only when this content region needs it; the [presentation policies guide](docs/presentation-policies.md) shows those opt-ins.
+With this `AsyncContent` initializer, loading and failure render nothing until a successful value
+exists, then retain that value. The [presentation policies guide](docs/presentation-policies.md)
+shows how to add placeholder or failure UI.
 
-The surrounding `ZStack` remains mounted while `AsyncContent` is empty, making it a reliable place to start the binding. Releasing the retained context cancels the subscription it owns.
+The surrounding `ZStack` remains mounted while `AsyncContent` is empty, making it a reliable place
+to start the binding. Releasing the context cancels its subscription.
 
 That is the core idea: bind observable presentation data once, then render its latest useful value with `AsyncContent`.
 
 ## Documentation
 
-- [Getting started](docs/getting-started.md) — connect a source, choose its reload behavior, and render the first result.
-- [Presentation policies](docs/presentation-policies.md) — choose placeholder, cached, hidden, and replacement behavior per view.
-- [Sources and lifecycle](docs/sources-and-lifecycle.md) — understand loads, results, retries, reset, rebinding, cancellation, and completion.
-- [Diagnostics](docs/diagnostics.md) — inspect load, binding, reload, and cancellation activity during development.
+- [Getting started](docs/getting-started.md) — connect a source, choose its reload behavior, and
+  render the first result.
+- [Presentation policies](docs/presentation-policies.md) — choose placeholder, cached, hidden, and
+  replacement behavior per view.
+- [Sources and lifecycle](docs/sources-and-lifecycle.md) — adapt source update types and understand
+  reload, reset, completion, and cancellation.
+- [Diagnostics](docs/diagnostics.md) — inspect load, binding, reload, and cancellation activity.
 
 ## Sample app
 
-Open [`SampleApp/SampleApp.xcodeproj`](SampleApp/SampleApp.xcodeproj) to explore a required content region replaced by failure UI, seeded content retained through refresh, and several independently loading sections.
+Open [`SampleApp/SampleApp.xcodeproj`](SampleApp/SampleApp.xcodeproj) to explore replacement failure
+UI, seeded content retained through refresh, and independently loading sections.
 
 ## License
 
