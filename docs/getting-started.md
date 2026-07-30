@@ -4,7 +4,9 @@ Ensemble separates observable presentation state, subscription ownership, and re
 
 ## Model the source result
 
-A bound source is a non-throwing `AsyncStream` whose elements are `Result` values. Representing failure as an element lets the same stream recover later instead of ending at the first error.
+A bound source is an `AsyncSequence` whose elements are `Result` values. Representing failure as
+an element lets the same sequence recover later instead of ending at the first error. If iteration
+itself throws, Ensemble presents that terminal error as failure.
 
 ```swift
 import Foundation

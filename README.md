@@ -2,7 +2,10 @@
 
 `Ensemble` is a lightweight framework for composing self-contained, reloadable SwiftUI features.
 
-A `ViewData` value remembers the latest successful data and its current lifecycle phase. A `ViewDataContext` feeds it from one-shot asynchronous operations, non-throwing streams of `Result` values, or observed emission decisions, while `AsyncContent` decides whether a view should show live data, retained data, placeholders, a failure, or nothing.
+A `ViewData` value remembers the latest successful data and its current lifecycle phase.
+A `ViewDataContext` feeds it from one-shot asynchronous operations or asynchronous sequences,
+while `AsyncContent` decides whether a view should show live data, retained data, placeholders,
+a failure, or nothing.
 
 - Seed presentation state immediately, load one value, or bind a stream of updates.
 - Distinguish not-yet-loaded, loaded-but-empty, and reset observable state.
@@ -33,7 +36,8 @@ Add the `Ensemble` product to the app target, then `import Ensemble` where it is
 
 ## Five-minute start
 
-Start with a source that returns a non-throwing stream of `Result` values. Own one `ViewData` value and retain its `ViewDataContext` for as long as the subscription should remain active:
+Start with a source that returns an asynchronous sequence of `Result` values. Own one `ViewData`
+value and retain its `ViewDataContext` for as long as the subscription should remain active:
 
 ```swift
 import Ensemble

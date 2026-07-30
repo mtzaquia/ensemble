@@ -29,6 +29,11 @@ struct ViewDataTests {
         case expected
     }
 
+    enum TestUpdate {
+        case result(Result<Int, TestError>)
+        case reset
+    }
+
     @Test("An initial value starts as successful presentation state")
     func initialValue() {
         let data = ViewData(42)
@@ -52,11 +57,11 @@ struct ViewDataTests {
         #expect(data.isLoading)
         #expect(data.latest == 41)
 
-        data.update(with: Result<Int, TestError>.failure(.expected))
+        data.fail(TestError.expected)
         #expect(data.isFailed)
         #expect(data.latest == 41)
 
-        data.update(with: Result<Int, TestError>.success(42))
+        data.set(42)
         #expect(data.isSuccessful)
         #expect(data.latest == 42)
 
@@ -125,33 +130,96 @@ struct ViewDataTests {
         continuation.finish()
     }
 
-    @Test("Observation emissions can skip and reset without ending the binding")
-    func observationEmissionsResetPresentation() async {
+    @Test("Bindings accept transformed asynchronous sequences")
+    func transformedSequence() async {
+        let (stream, continuation) = AsyncStream<Int>.makeStream()
+        let data = ViewData<Int>()
+        let context = ViewDataContext()
+
+        context.bind({
+            stream.map { Result<Int, TestError>.success($0) }
+        }, to: data)
+
+        continuation.yield(42)
+        #expect(await eventually { data.isSuccessful && data.latest == 42 })
+
+        continuation.finish()
+    }
+
+    @Test("A sequence iteration error enters failure")
+    func throwingSequence() async {
         let (stream, continuation) =
-            AsyncStream<ObservationEmission<Result<Int, TestError>>>.makeStream()
+            AsyncThrowingStream<Result<Int, TestError>, any Error>.makeStream()
         let data = ViewData<Int>()
         let context = ViewDataContext()
 
         context.bind({ stream }, to: data)
+        continuation.finish(throwing: TestError.expected)
+
+        #expect(await eventually { data.isFailed })
+    }
+
+    @Test("Custom element handling can reset without ending the binding")
+    func customElementsResetPresentation() async {
+        let (stream, continuation) =
+            AsyncStream<TestUpdate>.makeStream()
+        let data = ViewData<Int>()
+        let context = ViewDataContext()
+
+        context.bind({ stream }, to: data) { update, sink in
+            switch update {
+            case .result(let result):
+                sink.receive(result)
+            case .reset:
+                sink.reset()
+            }
+        }
         #expect(data.isLoading)
         #expect(data.retryAction != nil)
 
-        continuation.yield(.yield(.success(42)))
+        continuation.yield(.result(.success(42)))
         #expect(await eventually { data.isSuccessful && data.latest == 42 })
-
-        continuation.yield(.skip)
-        await Task.yield()
-        #expect(data.isSuccessful)
-        #expect(data.latest == 42)
 
         continuation.yield(.reset)
         #expect(await eventually { data.isEmpty && data.latest == nil })
         #expect(data.retryAction != nil)
 
-        continuation.yield(.yield(.success(43)))
+        continuation.yield(.result(.success(43)))
         #expect(await eventually { data.isSuccessful && data.latest == 43 })
 
         continuation.finish()
+    }
+
+    @Test("A retained sink ignores updates after its binding is replaced")
+    func staleSink() async throws {
+        let (firstStream, firstContinuation) = AsyncStream<TestUpdate>.makeStream()
+        let (secondStream, secondContinuation) =
+            AsyncStream<Result<Int, TestError>>.makeStream()
+        let data = ViewData<Int>()
+        let context = ViewDataContext()
+        var retainedSink: ViewDataSink<Int>?
+
+        context.bind({ firstStream }, to: data) { update, sink in
+            retainedSink = sink
+            if case .result(let result) = update {
+                sink.receive(result)
+            }
+        }
+        firstContinuation.yield(.result(.success(41)))
+        #expect(await eventually { retainedSink != nil && data.latest == 41 })
+
+        context.bind({ secondStream }, to: data)
+        secondContinuation.yield(.success(42))
+        #expect(await eventually { data.isSuccessful && data.latest == 42 })
+
+        let sink = try #require(retainedSink)
+        sink.receive(Result<Int, TestError>.success(99))
+        sink.reset()
+        #expect(data.isSuccessful)
+        #expect(data.latest == 42)
+
+        firstContinuation.finish()
+        secondContinuation.finish()
     }
 
     @Test("A load and binding update the same destination in arrival order")

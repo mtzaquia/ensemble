@@ -66,6 +66,11 @@ struct LoggerTests {
         #expect(message.contains("destination=\(destination)"))
         #expect(message.contains("reload=refresh"))
 
+        let valueMessage =
+            EnsembleLogEvent.bindingReceivedValue(destination: destination).message
+        #expect(valueMessage.contains("[bind] ✓ received value"))
+        #expect(valueMessage.contains("destination=\(destination)"))
+
         let resetMessage =
             EnsembleLogEvent.bindingReceivedReset(destination: destination).message
         #expect(resetMessage.contains("[bind] • received reset"))

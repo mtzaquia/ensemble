@@ -128,15 +128,6 @@ public final class ViewData<Value> {
         advanceAnimationValue()
     }
 
-    func update<Failure: Error>(with result: Result<Value, Failure>) {
-        switch result {
-        case .success(let value):
-            set(value)
-        case .failure(let error):
-            fail(error)
-        }
-    }
-
     func fail(_ error: any Error) {
         currentLoadingToken = nil
         loadingFailure = nil

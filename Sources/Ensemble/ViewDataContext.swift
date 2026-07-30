@@ -91,93 +91,69 @@ public final class ViewDataContext {
         }
     }
 
-    /// Binds a non-throwing sequence of results to presentation state.
+    /// Binds an asynchronous sequence of results to presentation state.
     ///
     /// Binding begins immediately and changes `destination` to loading. Successful and failed
     /// elements update the destination without ending the subscription, so a source can recover
     /// by emitting a later success. If the sequence completes before emitting, a destination still
     /// loading restores the failure that preceded loading, settles to success when cached data
     /// exists, or settles to empty otherwise. Completion after an emitted success or failure
-    /// preserves that phase.
+    /// preserves that phase. An error thrown by the sequence enters failure and ends the
+    /// subscription.
     ///
     /// The factory is invoked synchronously during binding and retained for reloads that need a new
     /// subscription. A method reference strongly retains its instance.
     /// Prefer a dedicated source method such as `useCase.values` when that source should share the
     /// context's lifetime. Avoid passing a method on an owner that also retains this context because
-    /// that creates a retain cycle. The factory should return promptly; the stream's producer should
-    /// own any expensive or blocking work.
+    /// that creates a retain cycle. The factory should return promptly; the sequence's producer
+    /// should own any expensive or blocking work.
     ///
     /// - Parameters:
-    ///   - makeSource: A factory that promptly creates a sequence for the initial binding and any required resubscription.
+    ///   - makeSource: A factory that promptly creates a sequence for the initial binding and any
+    ///     required resubscription.
     ///   - destination: The presentation state that receives source results.
     ///   - reload: The behavior used by ``reload(_:)`` and the retry action exposed to a failure view.
-    public func bind<Value, SourceError>(
-        _ makeSource: @escaping @MainActor () -> AsyncStream<Result<Value, SourceError>>,
+    public func bind<Value, SourceError, Source>(
+        _ makeSource: @escaping @MainActor () -> Source,
         to destination: ViewData<Value>,
         reload: ViewDataReloadBehavior = .resubscribe
-    ) where SourceError: Error {
-        bindSource(makeSource, to: destination, reload: reload) {
-            result,
-            destination,
-            identifier in
-            switch result {
-            case .success:
-                ensembleLog.ensembleDebug(.bindingReceivedValue(destination: identifier))
-            case .failure(let error):
-                ensembleLog.ensembleDebug(
-                    .bindingReceivedFailure(destination: identifier, error: error)
-                )
-            }
-            destination.update(with: result)
+    )
+    where
+        SourceError: Error,
+        Source: AsyncSequence,
+        Source.Element == Result<Value, SourceError>
+    {
+        bind(makeSource, to: destination, reload: reload) { result, sink in
+            sink.receive(result)
         }
     }
 
-    /// Binds observed result emissions to presentation state.
+    /// Binds an asynchronous sequence with application-defined element handling.
     ///
-    /// Binding begins immediately and changes `destination` to loading. Yielded success and failure
-    /// results use the same retention and recovery behavior as the result-stream overload. A reset
-    /// emission calls ``ViewData/reset()`` without cancelling the binding or removing its retry
-    /// action. Skip emissions leave presentation unchanged.
+    /// Binding, completion, cancellation, reload, and retry follow the same lifecycle as the
+    /// result-sequence overload. `receive` runs on the main actor only after Ensemble verifies that
+    /// the element belongs to the destination's active binding. Use the supplied ``ViewDataSink``
+    /// to deliver a result or reset presentation state without ending the binding.
     ///
     /// The factory is invoked synchronously during binding and retained for reloads that need a new
-    /// observation stream. Each invocation should return a fresh stream, such as one created with
-    /// ``AsyncStream/observing(resetValue:emissions:)``.
+    /// sequence. Each invocation should return a sequence ready for another subscription.
     ///
     /// - Parameters:
-    ///   - makeSource: A factory that promptly creates an observation stream for the initial binding
+    ///   - makeSource: A factory that promptly creates a sequence for the initial binding
     ///     and any required resubscription.
-    ///   - destination: The presentation state that receives yielded results and reset instructions.
+    ///   - destination: The presentation state associated with the binding.
     ///   - reload: The behavior used by ``reload(_:)`` and the retry action exposed to a failure view.
-    public func bind<Value, SourceError>(
-        _ makeSource: @escaping @MainActor () ->
-            AsyncStream<ObservationEmission<Result<Value, SourceError>>>,
+    ///   - receive: Interprets one accepted source element using a binding-scoped sink.
+    public func bind<Value, Source>(
+        _ makeSource: @escaping @MainActor () -> Source,
         to destination: ViewData<Value>,
-        reload: ViewDataReloadBehavior = .resubscribe
-    ) where SourceError: Error {
-        bindSource(makeSource, to: destination, reload: reload) {
-            emission,
-            destination,
-            identifier in
-            switch emission {
-            case .skip:
-                break
-
-            case .yield(let result):
-                switch result {
-                case .success:
-                    ensembleLog.ensembleDebug(.bindingReceivedValue(destination: identifier))
-                case .failure(let error):
-                    ensembleLog.ensembleDebug(
-                        .bindingReceivedFailure(destination: identifier, error: error)
-                    )
-                }
-                destination.update(with: result)
-
-            case .reset:
-                ensembleLog.ensembleDebug(.bindingReceivedReset(destination: identifier))
-                destination.reset()
-            }
-        }
+        reload: ViewDataReloadBehavior = .resubscribe,
+        receive: @escaping @MainActor (
+            _ element: Source.Element,
+            _ sink: ViewDataSink<Value>
+        ) -> Void
+    ) where Source: AsyncSequence {
+        bindSource(makeSource, to: destination, reload: reload, receive: receive)
     }
 
     /// Reloads a bound destination using the behavior configured by ``bind(_:to:reload:)``.
@@ -224,16 +200,15 @@ public final class ViewDataContext {
 }
 
 private extension ViewDataContext {
-    private func bindSource<Value, Element>(
-        _ makeSource: @escaping @MainActor () -> AsyncStream<Element>,
+    private func bindSource<Value, Source>(
+        _ makeSource: @escaping @MainActor () -> Source,
         to destination: ViewData<Value>,
         reload: ViewDataReloadBehavior,
         receive: @escaping @MainActor (
-            _ element: Element,
-            _ destination: ViewData<Value>,
-            _ identifier: ObjectIdentifier
+            _ element: Source.Element,
+            _ sink: ViewDataSink<Value>
         ) -> Void
-    ) {
+    ) where Source: AsyncSequence {
         let identifier = ObjectIdentifier(destination)
         removeRegistration(identifier)
         ensembleLog.ensembleDebug(
@@ -267,23 +242,37 @@ private extension ViewDataContext {
         )
     }
 
-    private func start<Value, Element>(
-        _ source: AsyncStream<Element>,
+    private func start<Value, Source>(
+        _ source: Source,
         destination: ViewData<Value>,
         identifier: ObjectIdentifier,
         registration: Registration,
         receive: @escaping @MainActor (
-            _ element: Element,
-            _ destination: ViewData<Value>,
-            _ identifier: ObjectIdentifier
+            _ element: Source.Element,
+            _ sink: ViewDataSink<Value>
         ) -> Void
-    ) {
-        let task = Task { [weak self, weak destination, weak registration] in
-            for await element in source {
+    ) where Source: AsyncSequence {
+        let sink = makeSink(
+            destination: destination,
+            identifier: identifier,
+            registration: registration
+        )
+        let task = Task { [weak self, weak registration] in
+            do {
+                for try await element in source {
+                    guard Task.isCancelled == false else { return }
+                    guard let self, let registration else { return }
+                    guard self.registrations[identifier] === registration else { return }
+                    receive(element, sink)
+                }
+            } catch is CancellationError {
+                return
+            } catch {
                 guard Task.isCancelled == false else { return }
-                guard let self, let destination, let registration else { return }
+                guard let self, let registration else { return }
                 guard self.registrations[identifier] === registration else { return }
-                receive(element, destination, identifier)
+                let failure: Result<Value, any Error> = .failure(error)
+                sink.receive(failure)
             }
 
             guard Task.isCancelled == false else { return }
@@ -297,18 +286,17 @@ private extension ViewDataContext {
         registration.task = task
     }
 
-    private func makeReloadAction<Value, Element>(
+    private func makeReloadAction<Value, Source>(
         _ behavior: ViewDataReloadBehavior,
-        makeSource: @escaping @MainActor () -> AsyncStream<Element>,
+        makeSource: @escaping @MainActor () -> Source,
         destination: ViewData<Value>,
         identifier: ObjectIdentifier,
         registration: Registration,
         receive: @escaping @MainActor (
-            _ element: Element,
-            _ destination: ViewData<Value>,
-            _ identifier: ObjectIdentifier
+            _ element: Source.Element,
+            _ sink: ViewDataSink<Value>
         ) -> Void
-    ) -> ViewDataRetryAction? {
+    ) -> ViewDataRetryAction? where Source: AsyncSequence {
         switch behavior {
         case .resubscribe:
             ViewDataRetryAction { [weak self, weak destination, weak registration] in
@@ -366,6 +354,33 @@ private extension ViewDataContext {
         let loadingToken = destination.beginLoading()
         registration.finishLoading = { [weak destination] in
             destination?.finishLoading(loadingToken)
+        }
+    }
+
+    private func makeSink<Value>(
+        destination: ViewData<Value>,
+        identifier: ObjectIdentifier,
+        registration: Registration
+    ) -> ViewDataSink<Value> {
+        ViewDataSink { [weak self, weak destination, weak registration] action in
+            guard let self, let destination, let registration else { return }
+            guard self.registrations[identifier] === registration else { return }
+
+            switch action {
+            case .value(let value):
+                ensembleLog.ensembleDebug(.bindingReceivedValue(destination: identifier))
+                destination.set(value)
+
+            case .failure(let error):
+                ensembleLog.ensembleDebug(
+                    .bindingReceivedFailure(destination: identifier, error: error)
+                )
+                destination.fail(error)
+
+            case .reset:
+                ensembleLog.ensembleDebug(.bindingReceivedReset(destination: identifier))
+                destination.reset()
+            }
         }
     }
 }

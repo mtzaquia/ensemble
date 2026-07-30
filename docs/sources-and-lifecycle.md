@@ -32,60 +32,64 @@ await context.load(useCase.fetch, to: entries)
 The latest accepted update determines the phase. The latest accepted success determines `latest`,
 because a later loading or failure update preserves that successful value.
 
-## Bind a result stream
+## Bind a result sequence
 
-`bind(_:to:reload:)` accepts a main-actor factory rather than one already-created stream:
+`bind(_:to:reload:)` accepts a main-actor factory rather than one already-created sequence:
 
 ```swift
 context.bind(useCase.values, to: entries)
 ```
 
-The context calls the factory synchronously during binding, then starts consuming the returned stream. The factory must return promptly; networking, observation, and other expensive work belong to the stream's producer.
+The context calls the factory synchronously during binding, then starts consuming the returned
+sequence. The factory must return promptly; networking, observation, and other expensive work
+belong to its producer. Any `AsyncSequence` works, including transformed and combined sequences.
 
-The stream itself does not throw. A failure is one `Result.failure` element, so it updates the destination without terminating iteration:
+A failure element updates the destination without terminating iteration:
 
 ```swift
 continuation.yield(.failure(.offline))
 continuation.yield(.success(recoveredEntries))
 ```
 
-The later success replaces `latest` and moves the destination back to success. A source may instead finish after either result when it represents one request per subscription.
+The later success replaces `latest` and moves the destination back to success. A source may instead
+finish after either result when it represents one request per subscription. If iteration itself
+throws, the terminal error enters failure.
 
-## Observe a stateful source
+## Bind a reset-aware source
 
-Use `AsyncStream.observing(resetValue:emissions:)` when the source exposes an observable reset
-value. The initial value establishes the subscription baseline; later changes emit `.reset`
-automatically. The emission closure maps the source's current state to a decision:
+Use the generic `bind(_:to:reload:receive:)` overload when a source has its own
+update type:
 
-| Decision | Effect |
+| Update | Effect |
 | --- | --- |
-| `.skip` | Emit nothing and wait for another observed change |
-| `.yield(result)` | Deliver a success or failure to the bound `ViewData` |
+| `.result(result)` | Deliver a success or failure to the bound `ViewData` |
 | `.reset` | Return the bound `ViewData` to its initial empty state |
 
-This keeps “not loaded yet” distinct from “loaded successfully with an empty value.” The former
-returns `.skip`, leaving a newly bound destination loading. The latter returns
-`.yield(.success([]))`, moving it to successful presentation with an empty collection.
+The source owns observation and decides when to emit. Silence leaves presentation unchanged, so
+“not loaded yet” produces no element, while “loaded successfully but empty” emits
+`.result(.success([]))`.
 
 ```swift
-func values() -> AsyncStream<
-  ObservationEmission<Result<[Entry], EntryFailure>>
-> {
-  AsyncStream.observing(resetValue: source.resetValue) {
-    source.emission
-  }
+enum EntryUpdate {
+  case result(Result<[Entry], EntryFailure>)
+  case reset
 }
 
-context.bind(useCase.values, to: entries)
+context.bind(useCase.updates, to: entries) { update, sink in
+  switch update {
+  case .result(let result):
+    sink.receive(result)
+  case .reset:
+    sink.reset()
+  }
+}
 ```
 
-The reset expression and emission closure run on the main actor and are reevaluated when observed
-state changes. `.skip` is a decision, not a stream element: the helper waits rather than emitting
-it. After a reset, immediate reevaluation delivers replacement state already available in the same
-change.
-
 Resetting presentation does not cancel the binding or remove its retry action. A later
-`.yield(result)` continues updating the same destination.
+`.result(result)` continues updating the same destination. The receive closure runs only after
+Ensemble confirms that the element belongs to the active binding. The supplied sink performs that
+check again whenever it is called, so even a retained sink cannot update a replaced or cancelled
+binding.
 
 ## Choose binding reload behavior
 

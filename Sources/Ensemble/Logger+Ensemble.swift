@@ -33,7 +33,7 @@ public enum Ensemble {
         /// Logs loads, bindings, reloads, cancellations, and failures.
         case normal
 
-        /// Includes each accepted binding value and source completion.
+        /// Includes each accepted binding value or reset and source completion.
         case trace
     }
 
@@ -69,8 +69,8 @@ enum EnsembleLogEvent {
     case loadCancelled(destination: ObjectIdentifier)
     case bindingStarted(destination: ObjectIdentifier, reload: EnsembleReloadMode)
     case bindingReceivedValue(destination: ObjectIdentifier)
-    case bindingReceivedFailure(destination: ObjectIdentifier, error: any Error)
     case bindingReceivedReset(destination: ObjectIdentifier)
+    case bindingReceivedFailure(destination: ObjectIdentifier, error: any Error)
     case bindingCompleted(destination: ObjectIdentifier)
     case reloadRequested(destination: ObjectIdentifier, mode: EnsembleReloadMode)
     case bindingCancelled(destination: ObjectIdentifier)
@@ -98,10 +98,10 @@ enum EnsembleLogEvent {
             "[bind] → started | destination=\(destination) reload=\(reload.rawValue)"
         case .bindingReceivedValue(let destination):
             "[bind] ✓ received value | destination=\(destination)"
-        case .bindingReceivedFailure(let destination, let error):
-            "[bind] ✗ received failure | destination=\(destination) error=\(error)"
         case .bindingReceivedReset(let destination):
             "[bind] • received reset | destination=\(destination)"
+        case .bindingReceivedFailure(let destination, let error):
+            "[bind] ✗ received failure | destination=\(destination) error=\(error)"
         case .bindingCompleted(let destination):
             "[bind] • completed | destination=\(destination)"
         case .reloadRequested(let destination, let mode):
