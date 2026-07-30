@@ -70,13 +70,14 @@ enum EnsembleLogEvent {
     case bindingStarted(destination: ObjectIdentifier, reload: EnsembleReloadMode)
     case bindingReceivedValue(destination: ObjectIdentifier)
     case bindingReceivedFailure(destination: ObjectIdentifier, error: any Error)
+    case bindingReceivedReset(destination: ObjectIdentifier)
     case bindingCompleted(destination: ObjectIdentifier)
     case reloadRequested(destination: ObjectIdentifier, mode: EnsembleReloadMode)
     case bindingCancelled(destination: ObjectIdentifier)
 
     var logLevel: Ensemble.DebugLogLevel {
         switch self {
-        case .bindingReceivedValue, .bindingCompleted:
+        case .bindingReceivedValue, .bindingReceivedReset, .bindingCompleted:
             .trace
         default:
             .normal
@@ -99,6 +100,8 @@ enum EnsembleLogEvent {
             "[bind] ✓ received value | destination=\(destination)"
         case .bindingReceivedFailure(let destination, let error):
             "[bind] ✗ received failure | destination=\(destination) error=\(error)"
+        case .bindingReceivedReset(let destination):
+            "[bind] • received reset | destination=\(destination)"
         case .bindingCompleted(let destination):
             "[bind] • completed | destination=\(destination)"
         case .reloadRequested(let destination, let mode):

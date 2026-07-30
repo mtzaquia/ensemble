@@ -125,6 +125,35 @@ struct ViewDataTests {
         continuation.finish()
     }
 
+    @Test("Observation emissions can skip and reset without ending the binding")
+    func observationEmissionsResetPresentation() async {
+        let (stream, continuation) =
+            AsyncStream<ObservationEmission<Result<Int, TestError>>>.makeStream()
+        let data = ViewData<Int>()
+        let context = ViewDataContext()
+
+        context.bind({ stream }, to: data)
+        #expect(data.isLoading)
+        #expect(data.retryAction != nil)
+
+        continuation.yield(.yield(.success(42)))
+        #expect(await eventually { data.isSuccessful && data.latest == 42 })
+
+        continuation.yield(.skip)
+        await Task.yield()
+        #expect(data.isSuccessful)
+        #expect(data.latest == 42)
+
+        continuation.yield(.reset)
+        #expect(await eventually { data.isEmpty && data.latest == nil })
+        #expect(data.retryAction != nil)
+
+        continuation.yield(.yield(.success(43)))
+        #expect(await eventually { data.isSuccessful && data.latest == 43 })
+
+        continuation.finish()
+    }
+
     @Test("A load and binding update the same destination in arrival order")
     func loadAndBindingWorkInTandem() async {
         let (source, sourceContinuation) =

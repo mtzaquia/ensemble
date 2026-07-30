@@ -28,7 +28,7 @@ struct ExampleApp: App {
 | --- | --- |
 | `.off` | No lifecycle logs. |
 | `.normal` | Loads, bindings, reloads, cancellations, and failures. |
-| `.trace` | Normal logs plus each accepted binding value and source completion. |
+| `.trace` | Normal logs plus each accepted binding value or reset and source completion. |
 
 These optional logs are compiled out of release builds. They include the destination's identity so
 activity from independent `ViewData` values can be distinguished, but do not include loaded values.
