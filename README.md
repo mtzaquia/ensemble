@@ -3,6 +3,7 @@
 [![Tests](https://github.com/mtzaquia/ensemble/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/mtzaquia/ensemble/actions/workflows/tests.yml)
 [![Swift 6.3](https://img.shields.io/badge/Swift-6.3-orange.svg)](https://www.swift.org/)
 [![iOS 17+](https://img.shields.io/badge/iOS-17%2B-blue.svg)](https://github.com/mtzaquia/ensemble/blob/main/Package.swift)
+![Class B](https://img.shields.io/badge/class-B-silver)
 
 `Ensemble` is a SwiftUI presentation-state library for composing self-contained, reloadable
 features.
