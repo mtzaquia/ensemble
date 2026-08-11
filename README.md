@@ -35,7 +35,7 @@ Package Manager.
 
 ```swift
 dependencies: [
-  .package(url: "https://github.com/mtzaquia/ensemble.git", from: "1.0.0"),
+  .package(url: "https://github.com/mtzaquia/ensemble.git", from: "1.1.0"),
 ]
 ```
 
