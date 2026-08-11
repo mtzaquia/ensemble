@@ -44,6 +44,10 @@ The context calls the factory synchronously during binding, then starts consumin
 sequence. The factory must return promptly; networking, observation, and other expensive work
 belong to its producer. Any `AsyncSequence` works, including transformed and combined sequences.
 
+For one-to-one element translation, prefer a lazy `AsyncSequence.map` so the original source keeps
+its production and lifecycle semantics. Create a new `AsyncStream` and producer task only when the
+adapter intentionally owns production, buffering, or lifecycle behavior.
+
 A failure element updates the destination without terminating iteration:
 
 ```swift
