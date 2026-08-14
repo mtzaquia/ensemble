@@ -27,8 +27,12 @@ import Observation
 ///
 /// Compare this value with SwiftUI's `animation(_:value:)` modifier to animate accepted
 /// presentation changes. Values from different `ViewData` instances compare unequal, and the value
-/// changes when its instance enters another lifecycle phase, receives a value or error, resets, or
-/// changes retry availability.
+/// changes when its instance enters another lifecycle phase, receives a changed value or error,
+/// resets, or changes retry availability.
+///
+/// When `ViewData` is already successful, receiving another value that compares equal to the latest
+/// value does not change this comparison value. The newly supplied value is still retained. Values
+/// without `Equatable` conformance are treated as changed whenever they are received.
 ///
 /// It does not retain or compare the presented value, so it remains equatable and sendable
 /// regardless of `Value`.
@@ -72,6 +76,10 @@ extension ViewDataAvailability: Sendable where Value: Sendable {}
 ///
 /// `ViewData` retains its latest successful value while loading or failed. A view can present that
 /// retained value without requiring the source to emit it again.
+///
+/// When already successful, receiving a value equal to the latest successful value retains the new
+/// value without advancing ``animationValue``. Values without `Equatable` conformance always
+/// advance it when received.
 ///
 /// ``reset()`` clears presentation state without cancelling work. A later accepted update from a
 /// load or binding can supply another value.
@@ -141,8 +149,10 @@ public final class ViewData<Value> {
 
     /// An opaque comparison value for animating the current presentation.
     ///
-    /// The value changes after every accepted presentation update and does not retain or require
-    /// an equatable `Value`. Pass it to SwiftUI's `animation(_:value:)` modifier.
+    /// The value changes after every accepted presentation change. When the phase is already
+    /// successful, receiving an equal `Value` retains that value without changing this comparison
+    /// value. A non-equatable `Value` is always treated as changed. Pass this value to SwiftUI's
+    /// `animation(_:value:)` modifier.
     public var animationValue: ViewDataAnimationValue {
         presentation.animationValue
     }
@@ -184,7 +194,7 @@ public final class ViewData<Value> {
     func set(_ value: Value) {
         currentLoadingToken = nil
         loadingFailure = nil
-        updatePresentation {
+        updatePresentation(advancingAnimation: shouldAdvanceAnimation(for: value)) {
             $0.latestValue = .available(value)
             $0.phase = .success
         }
@@ -265,10 +275,34 @@ extension ViewData {
         }
     }
 
-    private func updatePresentation(_ update: (inout Presentation) -> Void) {
+    private func shouldAdvanceAnimation(for value: Value) -> Bool {
+        guard case .success = presentation.phase else { return true }
+        guard case .available(let latestValue) = presentation.latestValue else { return true }
+        return valuesAreEqual(latestValue, value) == false
+    }
+
+    private func valuesAreEqual(_ lhs: Value, _ rhs: Value) -> Bool {
+        func compare<EquatableValue: Equatable>(
+            _ lhs: EquatableValue,
+            _ rhs: Any
+        ) -> Bool {
+            guard let rhs = rhs as? EquatableValue else { return false }
+            return lhs == rhs
+        }
+
+        guard let lhs = lhs as? any Equatable else { return false }
+        return compare(lhs, rhs)
+    }
+
+    private func updatePresentation(
+        advancingAnimation: Bool = true,
+        _ update: (inout Presentation) -> Void
+    ) {
         var nextPresentation = presentation
         update(&nextPresentation)
-        nextPresentation.animationValue = nextPresentation.animationValue.advanced()
+        if advancingAnimation {
+            nextPresentation.animationValue = nextPresentation.animationValue.advanced()
+        }
         presentation = nextPresentation
     }
 }

@@ -137,6 +137,66 @@ struct ViewDataTests {
         #expect(failure != repeatedFailure)
     }
 
+    @Test("An equivalent success keeps its animation value and retains the latest instance")
+    func equivalentSuccessDoesNotAdvanceAnimation() {
+        final class Model: Equatable {
+            let id: Int
+
+            init(id: Int) {
+                self.id = id
+            }
+
+            static func == (lhs: Model, rhs: Model) -> Bool {
+                lhs.id == rhs.id
+            }
+        }
+
+        let initial = Model(id: 42)
+        let replacement = Model(id: 42)
+        let data = ViewData(initial)
+        let animationValue = data.animationValue
+        let observation = ViewDataPresentationObservation(data)
+        observation.start()
+
+        data.set(replacement)
+
+        #expect(observation.cycles == 1)
+        #expect(data.animationValue == animationValue)
+        if case .available(let latest) = data.latestValue {
+            #expect(latest === replacement)
+        } else {
+            Issue.record("Expected the equivalent replacement to remain available")
+        }
+    }
+
+    @Test("An equivalent optional nil keeps its animation value")
+    func equivalentOptionalNilDoesNotAdvanceAnimation() {
+        let data = ViewData<Int?>(nil)
+        let animationValue = data.animationValue
+
+        data.set(nil)
+
+        #expect(data.latestValue == .available(nil))
+        #expect(data.animationValue == animationValue)
+    }
+
+    @Test("An equivalent value still advances animation when it recovers the phase")
+    func equivalentSuccessRecoversPhase() {
+        let data = ViewData(42)
+
+        data.beginLoading()
+        let loading = data.animationValue
+        data.set(42)
+        #expect(data.isSuccessful)
+        #expect(data.animationValue != loading)
+
+        data.fail(TestError.expected)
+        let failure = data.animationValue
+        data.set(42)
+        #expect(data.isSuccessful)
+        #expect(data.animationValue != failure)
+    }
+
     @Test("A successful update invalidates presentation in one observation cycle")
     func successfulUpdateIsCoherent() {
         let data = ViewData([1, 2, 3])

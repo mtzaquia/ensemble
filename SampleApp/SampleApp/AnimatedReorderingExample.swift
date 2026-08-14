@@ -28,8 +28,8 @@ struct AnimatedReorderingExample: View {
     @State private var viewModel = AnimatedReorderingViewModel()
 
     var body: some View {
-        AsyncContent(viewModel.entries) { entries, source in
-            List {
+        List {
+            AsyncContent(viewModel.entries) { entries, source in
                 Section {
                     SampleEntryRows(entries: entries, source: source)
                 } header: {
