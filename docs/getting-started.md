@@ -34,7 +34,7 @@ final class EntriesViewModel {
 
 Keep the context alive for as long as its bindings should remain active. Binding marks `entries`
 as loading and consumes results until the sequence completes, the destination is rebound, or the
-context is released. Success replaces `latest`; failure preserves it.
+context is released. Success replaces `latestValue`; failure preserves it.
 
 The source factory runs synchronously and must return promptly. Networking, observation, and other
 work belong to the sequence producer.

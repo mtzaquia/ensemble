@@ -54,7 +54,7 @@ public final class ViewDataContext {
     /// Loading begins before `operation` is called. A returned value becomes the destination's
     /// latest successful value, while a thrown error enters failure and preserves any latest value.
     /// Cancellation is not presented as a new failure; it restores a failure that preceded loading,
-    /// settles to cached success, or settles to empty when no later update has replaced this load's
+    /// settles to retained success, or settles to empty when no later update has replaced this load's
     /// loading transition.
     ///
     /// A load does not cancel or replace a binding for the same destination. Load completions and
@@ -96,7 +96,7 @@ public final class ViewDataContext {
     /// Binding begins immediately and changes `destination` to loading. Successful and failed
     /// elements update the destination without ending the subscription, so a source can recover
     /// by emitting a later success. If the sequence completes before emitting, a destination still
-    /// loading restores the failure that preceded loading, settles to success when cached data
+    /// loading restores the failure that preceded loading, settles to success when retained data
     /// exists, or settles to empty otherwise. Completion after an emitted success or failure
     /// preserves that phase. An error thrown by the sequence enters failure and ends the
     /// subscription.
@@ -172,7 +172,7 @@ public final class ViewDataContext {
     /// Cancels and removes the binding for a destination.
     ///
     /// If the destination was loading, it restores the failure that preceded loading, returns to
-    /// success when cached data exists, or returns to empty otherwise. Existing success or failure
+    /// success when retained data exists, or returns to empty otherwise. Existing success or failure
     /// presentation state is preserved. Cancellation also removes the retry action associated with
     /// the binding.
     ///

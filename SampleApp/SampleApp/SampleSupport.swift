@@ -59,7 +59,7 @@ enum SampleFailure: LocalizedError, Sendable {
     var errorDescription: String? {
         switch self {
         case .offline:
-            "The source is offline. Cached content can remain on screen."
+            "The source is offline. Retained content can remain on screen."
         case .unavailable:
             "This required source failed. Retry to create a fresh stream."
         }
@@ -143,16 +143,16 @@ struct SampleSourceBadge: View {
 
     private var label: String {
         switch source {
-        case .live: "Live"
-        case .cached: "Cached"
+        case .latest: "Latest"
+        case .retained: "Retained"
         case .placeholder: "Placeholder"
         }
     }
 
     private var color: Color {
         switch source {
-        case .live: .green
-        case .cached: .orange
+        case .latest: .green
+        case .retained: .orange
         case .placeholder: .secondary
         }
     }

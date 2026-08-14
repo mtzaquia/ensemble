@@ -31,9 +31,9 @@ struct LoadingLabExample: View {
         List {
             Section {
                 AsyncContent(
-                    viewModel.entries,
+                    unwrapping: viewModel.entries,
                     loading: .placeholder(SampleEntry.placeholders),
-                    failure: .cached
+                    failure: .retained
                 ) { entries, source in
                     SampleEntryRows(entries: entries, source: source)
                 } failure: { error, retry in
@@ -49,7 +49,9 @@ struct LoadingLabExample: View {
                 HStack {
                     Text("Response")
                     Spacer()
-                    SampleSourceBadge(source: viewModel.renderedSource)
+                    if let source = viewModel.renderedSource {
+                        SampleSourceBadge(source: source)
+                    }
                 }
             } footer: {
                 Text(viewModel.phaseDescription)
@@ -96,6 +98,15 @@ struct LoadingLabExample: View {
                     )
                 )
 
+                Toggle(
+                    "Return no content",
+                    isOn: Binding(
+                        get: { viewModel.shouldReturnNoContent },
+                        set: { viewModel.setShouldReturnNoContent($0) }
+                    )
+                )
+                .accessibilityIdentifier(SampleAppAccessibility.loadingLabNoContent)
+
                 Button {
                     viewModel.toggleAutomaticLoading()
                 } label: {
@@ -104,21 +115,21 @@ struct LoadingLabExample: View {
                 .accessibilityIdentifier(SampleAppAccessibility.loadingLabStart)
             }
 
-            Section("Cache") {
+            Section("Retained value") {
                 Button(role: .destructive) {
-                    viewModel.deleteCache()
+                    viewModel.clearRetainedValue()
                 } label: {
-                    Label("Delete cached value", systemImage: "trash")
+                    Label("Clear retained value", systemImage: "trash")
                 }
-                .disabled(viewModel.hasCache == false)
+                .disabled(viewModel.hasRetainedValue == false)
                 .accessibilityIdentifier(SampleAppAccessibility.loadingLabDeleteCache)
 
                 Button {
-                    viewModel.restoreCache()
+                    viewModel.restoreSampleValue()
                 } label: {
-                    Label("Restore sample cache", systemImage: "internaldrive")
+                    Label("Restore sample value", systemImage: "internaldrive")
                 }
-                .disabled(viewModel.hasCache)
+                .disabled(viewModel.hasRetainedValue)
                 .accessibilityIdentifier(SampleAppAccessibility.loadingLabRestoreCache)
             }
 
@@ -169,7 +180,8 @@ struct LoadingLabExample: View {
             .accessibilityIdentifier(SampleAppAccessibility.loadingLabHistory)
 
             Section("Try this") {
-                Label("Delete the cache, then choose In-flight to reveal placeholders.", systemImage: "hand.tap")
+                Label("Delete the cache to reveal placeholders immediately.", systemImage: "hand.tap")
+                Label("Return no content to watch unwrapping omit a successful nil value.", systemImage: "rectangle.slash")
                 Label("Choose Finished to watch the response rows replace the old data.", systemImage: "sparkles")
                 Label("Enable failure to compare failure with and without retained content.", systemImage: "exclamationmark.arrow.trianglehead.2.clockwise.rotate.90")
             }
@@ -208,10 +220,11 @@ private enum LoadingLabRequestStage: String, CaseIterable, Identifiable {
 
 @Observable
 private final class LoadingLabViewModel {
-    let entries = ViewData(SampleEntry.cached)
+    let entries = ViewData<[SampleEntry]?>(SampleEntry.cached)
 
     var duration = 3.0
     private(set) var shouldFail = false
+    private(set) var shouldReturnNoContent = false
     private(set) var requestStage = LoadingLabRequestStage.idle
     private(set) var isRunningAutomatically = false
     private(set) var events: [LoadingLabEvent] = []
@@ -223,37 +236,39 @@ private final class LoadingLabViewModel {
     @ObservationIgnored private var nextEventID = 0
     @ObservationIgnored private var requestIsActive = false
 
-    var hasCache: Bool {
-        entries.latest != nil
+    var hasRetainedValue: Bool {
+        retainedEntries != nil
     }
 
-    var renderedSource: AsyncContentSource {
+    var renderedSource: AsyncContentSource? {
         switch entries.phase {
         case .loading:
-            entries.latest == nil ? .placeholder : .cached
+            retainedEntries == nil ? .placeholder : .retained
         case .empty:
             .placeholder
         case .success:
-            .live
+            retainedEntries == nil ? nil : .latest
         case .failure:
-            entries.latest == nil ? .placeholder : .cached
+            retainedEntries == nil ? nil : .retained
         }
     }
 
     var phaseDescription: String {
         switch entries.phase {
         case .empty:
-            "The presentation cache is empty. Choose In-flight or start an automatic request."
+            "No successful response is retained, so the placeholder rows are visible."
         case .loading:
-            entries.latest == nil
-                ? "No cached value is available, so the placeholder rows are visible."
+            retainedEntries == nil
+                ? "No retained value is available, so the placeholder rows are visible."
                 : "The retained response stays visible while the next request is in flight."
         case .success:
-            "The latest request completed and installed live rows."
+            retainedEntries == nil
+                ? "The request succeeded with no content, so unwrapping omitted the response."
+                : "The latest request completed and installed the latest rows."
         case .failure:
-            entries.latest == nil
+            retainedEntries == nil
                 ? "The request failed without a value to retain."
-                : "The request failed, but the cached rows remain visible."
+                : "The request failed, but the retained rows remain visible."
         }
     }
 
@@ -275,8 +290,8 @@ private final class LoadingLabViewModel {
         )
         useCase.finish(with: .success(SampleEntry.cached))
         record(
-            title: "Sample cache installed",
-            detail: "The lab started with cached rows ready for the first request.",
+            title: "Sample value installed",
+            detail: "The lab started with retained rows ready for the first request.",
             systemImage: "internaldrive"
         )
     }
@@ -309,35 +324,52 @@ private final class LoadingLabViewModel {
 
     func setShouldFail(_ shouldFail: Bool) {
         self.shouldFail = shouldFail
+        if shouldFail {
+            shouldReturnNoContent = false
+        }
         record(
             title: shouldFail ? "Failure enabled" : "Success enabled",
             detail: shouldFail
                 ? "The next completed request will emit an offline failure."
-                : "The next completed request will install a new live response.",
+                : "The next completed request will install a new response.",
             systemImage: shouldFail ? "exclamationmark.triangle" : "checkmark.circle"
         )
     }
 
-    func deleteCache() {
+    func setShouldReturnNoContent(_ shouldReturnNoContent: Bool) {
+        self.shouldReturnNoContent = shouldReturnNoContent
+        if shouldReturnNoContent {
+            shouldFail = false
+        }
+        record(
+            title: shouldReturnNoContent ? "No-content success enabled" : "Content success enabled",
+            detail: shouldReturnNoContent
+                ? "The next completed request will emit a successful nil value."
+                : "The next completed request will install a response.",
+            systemImage: shouldReturnNoContent ? "rectangle.slash" : "checkmark.circle"
+        )
+    }
+
+    func clearRetainedValue() {
         pauseAutomaticLoading()
         requestIsActive = false
         requestStage = .idle
         entries.reset()
         record(
-            title: "Cache deleted",
-            detail: "The next in-flight request will render placeholder rows.",
+            title: "Retained value cleared",
+            detail: "Placeholder rows are visible before the next request begins.",
             systemImage: "trash"
         )
     }
 
-    func restoreCache() {
+    func restoreSampleValue() {
         pauseAutomaticLoading()
         requestIsActive = false
         requestStage = .idle
         useCase.finish(with: .success(SampleEntry.cached))
         record(
-            title: "Sample cache restored",
-            detail: "The cached response is available for the next loading transition.",
+            title: "Sample value restored",
+            detail: "The retained response is available for the next loading transition.",
             systemImage: "internaldrive"
         )
     }
@@ -380,15 +412,15 @@ private final class LoadingLabViewModel {
     }
 
     private func beginRequest() {
-        let hadCache = entries.latest != nil
+        let hadRetainedValue = retainedEntries != nil
         requestIsActive = true
         requestStage = .inFlight
         context.reload(entries)
         record(
             title: "Request started",
-            detail: hadCache
-                ? "The cached rows remain visible while the request is in flight."
-                : "No cached value is available, so placeholder rows are visible.",
+            detail: hadRetainedValue
+                ? "The retained rows remain visible while the request is in flight."
+                : "No retained value is available, so placeholder rows are visible.",
             systemImage: "arrow.trianglehead.2.clockwise"
         )
     }
@@ -402,17 +434,24 @@ private final class LoadingLabViewModel {
             useCase.finish(with: .failure(.offline))
             record(
                 title: "Request failed",
-                detail: entries.latest == nil
-                    ? "No cached value is available, so the failure view replaces the placeholders."
-                    : "The cached rows remain visible after the failure.",
+                detail: retainedEntries == nil
+                    ? "No retained value is available, so the failure content replaces the placeholders."
+                    : "The retained rows remain visible after the failure.",
                 systemImage: "exclamationmark.triangle"
+            )
+        } else if shouldReturnNoContent {
+            useCase.finish(with: .success(nil))
+            record(
+                title: "Request returned no content",
+                detail: "The successful nil value made AsyncContent omit its response content.",
+                systemImage: "rectangle.slash"
             )
         } else {
             let response = nextResponse()
             useCase.finish(with: .success(response))
             record(
                 title: "Request succeeded",
-                detail: "The response installed \(response.count) live rows.",
+                detail: "The response installed \(response.count) current rows.",
                 systemImage: "checkmark.circle"
             )
         }
@@ -421,18 +460,27 @@ private final class LoadingLabViewModel {
     private func moveToIdle() {
         requestIsActive = false
         requestStage = .idle
-        if let latest = entries.latest {
+        if let latest = retainedEntries {
             useCase.finish(with: .success(latest))
         } else {
             entries.reset()
         }
         record(
             title: "Returned to idle",
-            detail: entries.latest == nil
-                ? "The response remains empty until another request begins."
+            detail: retainedEntries == nil
+                ? "Placeholder rows remain visible until another successful response arrives."
                 : "The latest response remains available without an active request.",
             systemImage: "pause.circle"
         )
+    }
+
+    private var retainedEntries: [SampleEntry]? {
+        switch entries.latestValue {
+        case .unavailable:
+            nil
+        case .available(let entries):
+            entries
+        }
     }
 
     private func record(
@@ -478,7 +526,7 @@ private final class LoadingLabViewModel {
 }
 
 private final class LoadingLabUseCase {
-    typealias Update = Result<[SampleEntry], SampleFailure>
+    typealias Update = Result<[SampleEntry]?, SampleFailure>
 
     private let stream: AsyncStream<Update>
     private let continuation: AsyncStream<Update>.Continuation

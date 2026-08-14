@@ -48,7 +48,6 @@ nonisolated final class SampleAppUITests: XCTestCase {
         XCTAssertTrue(element(A11y.entry(0)).waitForExistence(timeout: 2))
 
         requestStage.buttons["Finished"].tap()
-
         XCTAssertTrue(element(A11y.entry(101)).waitForExistence(timeout: 3))
 
         let succeededEvent = app.staticTexts["Request succeeded"]
@@ -59,6 +58,20 @@ nonisolated final class SampleAppUITests: XCTestCase {
         scrollUntilHittable(clearHistory, direction: .up, attempts: 10)
         clearHistory.tap()
         XCTAssertFalse(succeededEvent.exists)
+
+        let noContent = app.switches[A11y.loadingLabNoContent]
+        scrollUntilHittable(noContent, direction: .down, attempts: 10)
+        noContent.tap()
+
+        scrollUntilHittable(deleteCache, direction: .up)
+        deleteCache.tap()
+
+        scrollUntilHittable(requestStage, direction: .down)
+        requestStage.buttons["In-flight"].tap()
+        XCTAssertTrue(element(A11y.entry(0)).waitForExistence(timeout: 2))
+
+        requestStage.buttons["Finished"].tap()
+        XCTAssertTrue(waitForNonExistence(element(A11y.entry(0))))
     }
 
     @MainActor
@@ -102,7 +115,7 @@ nonisolated final class SampleAppUITests: XCTestCase {
         XCTAssertTrue(element(A11y.entry(10)).waitForExistence(timeout: 2))
         XCTAssertTrue(element(A11y.entry(300)).waitForExistence(timeout: 3))
         XCTAssertTrue(element(A11y.failure("tip")).waitForExistence(timeout: 3))
-        XCTAssertTrue(element(A11y.entry(10)).exists, "Cached account content disappeared after failure")
+        XCTAssertTrue(element(A11y.entry(10)).exists, "Retained account content disappeared after failure")
 
         let retryTip = app.buttons[A11y.failureRetry("tip")]
         XCTAssertTrue(retryTip.waitForExistence(timeout: 2))
@@ -138,6 +151,19 @@ nonisolated final class SampleAppUITests: XCTestCase {
     }
 
     @MainActor
+    private func waitForNonExistence(_ element: XCUIElement) -> Bool {
+        XCTWaiter.wait(
+            for: [
+                XCTNSPredicateExpectation(
+                    predicate: NSPredicate(format: "exists == false"),
+                    object: element
+                ),
+            ],
+            timeout: 3
+        ) == .completed
+    }
+
+    @MainActor
     private func scrollUntilHittable(
         _ element: XCUIElement,
         direction: SwipeDirection,
@@ -166,6 +192,7 @@ private enum A11y {
     static let loadingLabScreen = "sample.loading-lab.screen"
     static let loadingLabStage = "sample.loading-lab.stage"
     static let loadingLabDeleteCache = "sample.loading-lab.delete-cache"
+    static let loadingLabNoContent = "sample.loading-lab.no-content"
 
     static let screenReplacementFailure = "sample.screen-replacement.failure"
     static let screenReplacementRetry = "sample.screen-replacement.retry"

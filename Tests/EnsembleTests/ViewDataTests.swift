@@ -39,7 +39,7 @@ struct ViewDataTests {
         let data = ViewData(42)
 
         #expect(data.isSuccessful)
-        #expect(data.latest == 42)
+        #expect(data.latestValue == .available(42))
     }
 
     @Test("Internal transitions preserve the latest value while loading and failed")
@@ -47,27 +47,51 @@ struct ViewDataTests {
         let data = ViewData<Int>()
 
         #expect(data.isEmpty)
-        #expect(data.latest == nil)
+        #expect(data.latestValue == .unavailable)
 
         data.set(41)
         #expect(data.isSuccessful)
-        #expect(data.latest == 41)
+        #expect(data.latestValue == .available(41))
 
         data.beginLoading()
         #expect(data.isLoading)
-        #expect(data.latest == 41)
+        #expect(data.latestValue == .available(41))
 
         data.fail(TestError.expected)
         #expect(data.isFailed)
-        #expect(data.latest == 41)
+        #expect(data.latestValue == .available(41))
 
         data.set(42)
         #expect(data.isSuccessful)
-        #expect(data.latest == 42)
+        #expect(data.latestValue == .available(42))
 
         data.reset()
         #expect(data.isEmpty)
-        #expect(data.latest == nil)
+        #expect(data.latestValue == .unavailable)
+    }
+
+    @Test("An optional nil is an available successful value")
+    func optionalNilAvailability() {
+        let data = ViewData<Int?>(nil)
+
+        #expect(data.isSuccessful)
+        #expect(data.latestValue == .available(nil))
+
+        let loadingToken = data.beginLoading()
+        #expect(data.isLoading)
+        #expect(data.latestValue == .available(nil))
+
+        data.finishLoading(loadingToken)
+        #expect(data.isSuccessful)
+        #expect(data.latestValue == .available(nil))
+
+        data.fail(TestError.expected)
+        #expect(data.isFailed)
+        #expect(data.latestValue == .available(nil))
+
+        data.reset()
+        #expect(data.isEmpty)
+        #expect(data.latestValue == .unavailable)
     }
 
     @Test("Animation values identify their source and every accepted transition")
@@ -88,16 +112,16 @@ struct ViewDataTests {
         #expect(loading != success)
 
         data.beginLoading()
-        let cachedLoading = data.animationValue
-        #expect(success != cachedLoading)
+        let retainedLoading = data.animationValue
+        #expect(success != retainedLoading)
 
         data.fail(TestError.expected)
-        let cachedFailure = data.animationValue
-        #expect(cachedLoading != cachedFailure)
+        let retainedFailure = data.animationValue
+        #expect(retainedLoading != retainedFailure)
 
         data.set(NonEquatable())
         let replacement = data.animationValue
-        #expect(cachedFailure != replacement)
+        #expect(retainedFailure != replacement)
 
         data.reset()
         let reset = data.animationValue
@@ -125,7 +149,7 @@ struct ViewDataTests {
         #expect(await eventually { data.isFailed })
 
         continuation.yield(.success(42))
-        #expect(await eventually { data.isSuccessful && data.latest == 42 })
+        #expect(await eventually { data.isSuccessful && data.latestValue == .available(42) })
 
         continuation.finish()
     }
@@ -141,7 +165,7 @@ struct ViewDataTests {
         }, to: data)
 
         continuation.yield(42)
-        #expect(await eventually { data.isSuccessful && data.latest == 42 })
+        #expect(await eventually { data.isSuccessful && data.latestValue == .available(42) })
 
         continuation.finish()
     }
@@ -178,14 +202,14 @@ struct ViewDataTests {
         #expect(data.retryAction != nil)
 
         continuation.yield(.result(.success(42)))
-        #expect(await eventually { data.isSuccessful && data.latest == 42 })
+        #expect(await eventually { data.isSuccessful && data.latestValue == .available(42) })
 
         continuation.yield(.reset)
-        #expect(await eventually { data.isEmpty && data.latest == nil })
+        #expect(await eventually { data.isEmpty && data.latestValue == .unavailable })
         #expect(data.retryAction != nil)
 
         continuation.yield(.result(.success(43)))
-        #expect(await eventually { data.isSuccessful && data.latest == 43 })
+        #expect(await eventually { data.isSuccessful && data.latestValue == .available(43) })
 
         continuation.finish()
     }
@@ -206,17 +230,17 @@ struct ViewDataTests {
             }
         }
         firstContinuation.yield(.result(.success(41)))
-        #expect(await eventually { retainedSink != nil && data.latest == 41 })
+        #expect(await eventually { retainedSink != nil && data.latestValue == .available(41) })
 
         context.bind({ secondStream }, to: data)
         secondContinuation.yield(.success(42))
-        #expect(await eventually { data.isSuccessful && data.latest == 42 })
+        #expect(await eventually { data.isSuccessful && data.latestValue == .available(42) })
 
         let sink = try #require(retainedSink)
         sink.receive(Result<Int, TestError>.success(99))
         sink.reset()
         #expect(data.isSuccessful)
-        #expect(data.latest == 42)
+        #expect(data.latestValue == .available(42))
 
         firstContinuation.finish()
         secondContinuation.finish()
@@ -243,17 +267,17 @@ struct ViewDataTests {
         #expect(await eventually { data.isLoading })
 
         sourceContinuation.yield(.success(1))
-        #expect(await eventually { data.isSuccessful && data.latest == 1 })
+        #expect(await eventually { data.isSuccessful && data.latestValue == .available(1) })
 
         loadContinuation.yield(2)
         loadContinuation.finish()
         await loadTask.value
         #expect(data.isSuccessful)
-        #expect(data.latest == 2)
+        #expect(data.latestValue == .available(2))
         #expect(data.retryAction != nil)
 
         sourceContinuation.yield(.success(3))
-        #expect(await eventually { data.isSuccessful && data.latest == 3 })
+        #expect(await eventually { data.isSuccessful && data.latestValue == .available(3) })
 
         sourceContinuation.finish()
     }
@@ -268,7 +292,7 @@ struct ViewDataTests {
         }, to: data)
 
         #expect(data.isFailed)
-        #expect(data.latest == 41)
+        #expect(data.latestValue == .available(41))
     }
 
     @Test("Cancelling a load does not replace a later bound result")
@@ -287,12 +311,12 @@ struct ViewDataTests {
 
         #expect(await eventually { data.isLoading })
         continuation.yield(.success(42))
-        #expect(await eventually { data.isSuccessful && data.latest == 42 })
+        #expect(await eventually { data.isSuccessful && data.latestValue == .available(42) })
 
         loadTask.cancel()
         await loadTask.value
         #expect(data.isSuccessful)
-        #expect(data.latest == 42)
+        #expect(data.latestValue == .available(42))
 
         continuation.finish()
     }
@@ -306,10 +330,10 @@ struct ViewDataTests {
         context.bind({ source }, to: data)
         data.reset()
         #expect(data.isEmpty)
-        #expect(data.latest == nil)
+        #expect(data.latestValue == .unavailable)
 
         continuation.yield(.success(42))
-        #expect(await eventually { data.isSuccessful && data.latest == 42 })
+        #expect(await eventually { data.isSuccessful && data.latestValue == .available(42) })
 
         continuation.finish()
     }
@@ -335,11 +359,11 @@ struct ViewDataTests {
 
         #expect(await eventually { continuations.count == 2 && data.isLoading })
         continuations[1].yield(.success(42))
-        #expect(await eventually { data.isSuccessful && data.latest == 42 })
+        #expect(await eventually { data.isSuccessful && data.latestValue == .available(42) })
 
         continuations[0].yield(.success(1))
         await Task.yield()
-        #expect(data.latest == 42)
+        #expect(data.latestValue == .available(42))
 
         continuations[1].finish()
     }
@@ -385,11 +409,11 @@ struct ViewDataTests {
         #expect(data.isLoading)
 
         continuations[1].yield(.success(42))
-        #expect(await eventually { data.isSuccessful && data.latest == 42 })
+        #expect(await eventually { data.isSuccessful && data.latestValue == .available(42) })
 
         continuations[0].yield(.success(1))
         await Task.yield()
-        #expect(data.latest == 42)
+        #expect(data.latestValue == .available(42))
 
         continuations[1].finish()
     }
@@ -414,7 +438,7 @@ struct ViewDataTests {
         #expect(data.isLoading)
         #expect(sourceCount == 1)
         #expect(refreshCount == 1)
-        #expect(await eventually { data.isSuccessful && data.latest == 1 })
+        #expect(await eventually { data.isSuccessful && data.latestValue == .available(1) })
 
         continuation.yield(.failure(.expected))
         #expect(await eventually { data.isFailed })
@@ -424,7 +448,7 @@ struct ViewDataTests {
         #expect(data.isLoading)
         #expect(sourceCount == 1)
         #expect(refreshCount == 2)
-        #expect(await eventually { data.isSuccessful && data.latest == 2 })
+        #expect(await eventually { data.isSuccessful && data.latestValue == .available(2) })
 
         continuation.finish()
     }
@@ -449,7 +473,7 @@ struct ViewDataTests {
         context.reload(data)
         #expect(continuations.count == 2)
         #expect(data.isLoading)
-        #expect(await eventually { data.isSuccessful && data.latest == 42 })
+        #expect(await eventually { data.isSuccessful && data.latestValue == .available(42) })
 
         continuations[1].finish()
     }
@@ -538,7 +562,7 @@ struct ViewDataTests {
         continuation.finish()
     }
 
-    @Test("A source that completes without another result restores cached success")
+    @Test("A source that completes without another result restores retained success")
     func emptyRefreshPreservesSuccess() async {
         let (stream, continuation) = AsyncStream<Result<Int, TestError>>.makeStream()
         let data = ViewData(42)
@@ -548,7 +572,7 @@ struct ViewDataTests {
         continuation.finish()
 
         #expect(await eventually { data.isSuccessful })
-        #expect(data.latest == 42)
+        #expect(data.latestValue == .available(42))
     }
 }
 

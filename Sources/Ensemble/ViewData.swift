@@ -51,10 +51,27 @@ public struct ViewDataAnimationValue: Equatable, Sendable {
     }
 }
 
+/// The availability of a successful value retained by ``ViewData``.
+///
+/// Availability is independent of ``ViewData/phase``. Loading and failure can retain an available
+/// value, and an optional value can be available even when its successful result is `nil`.
+public enum ViewDataAvailability<Value> {
+    /// No successful value has been supplied, or the retained value was removed by
+    /// ``ViewData/reset()``.
+    case unavailable
+
+    /// A successful value has been supplied and retained.
+    case available(Value)
+}
+
+extension ViewDataAvailability: Equatable where Value: Equatable {}
+extension ViewDataAvailability: Hashable where Value: Hashable {}
+extension ViewDataAvailability: Sendable where Value: Sendable {}
+
 /// Observable presentation state for an initial value or updates supplied by ``ViewDataContext``.
 ///
-/// `ViewData` retains its latest successful value while loading or failed. A view can use that value
-/// as cached content without requiring the source to emit it again.
+/// `ViewData` retains its latest successful value while loading or failed. A view can present that
+/// retained value without requiring the source to emit it again.
 ///
 /// ``reset()`` clears presentation state without cancelling work. A later accepted update from a
 /// load or binding can supply another value.
@@ -69,10 +86,10 @@ public final class ViewData<Value> {
 
         /// The state is waiting for its next update.
         ///
-        /// The previous successful value, if one exists, remains available through ``latest``.
+        /// The previous successful value, if one exists, remains available through ``latestValue``.
         case loading
 
-        /// A successful value is available through ``ViewData/latest``.
+        /// A successful value is available through ``ViewData/latestValue``.
         case success
 
         /// The latest update contained an error.
@@ -84,10 +101,30 @@ public final class ViewData<Value> {
     /// The current lifecycle phase, including the latest error when the phase is failed.
     public private(set) var phase: Phase
 
-    /// The most recently supplied successful value.
+    /// The availability of the most recently supplied successful value.
     ///
-    /// Loading and failure updates preserve this value. ``reset()`` removes it.
-    public private(set) var latest: Value?
+    /// Loading and failure updates preserve this availability. ``reset()`` changes it to
+    /// ``ViewDataAvailability/unavailable``. When `Value` is optional, `.available(nil)` represents
+    /// a successful result whose domain value is absent.
+    public private(set) var latestValue: ViewDataAvailability<Value> = .unavailable
+
+    /// The most recently supplied successful value, represented as an optional property.
+    ///
+    /// Loading and failure updates preserve this value. ``reset()`` removes it. When `Value` is
+    /// optional, use ``latestValue`` to distinguish an unavailable value from an available `nil`.
+    @available(
+        *,
+        deprecated,
+        message: "Use latestValue to distinguish an unavailable value from an available optional nil."
+    )
+    public var latest: Value? {
+        switch latestValue {
+        case .unavailable:
+            nil
+        case .available(let value):
+            .some(value)
+        }
+    }
 
     /// An opaque comparison value for animating the current presentation.
     ///
@@ -107,13 +144,13 @@ public final class ViewData<Value> {
 
     /// Creates successful presentation state with an initial value.
     ///
-    /// The value is immediately available through ``latest`` and the initial ``phase`` is
+    /// The value is immediately available through ``latestValue`` and the initial ``phase`` is
     /// ``Phase/success``. Binding a source later preserves this value while the source is loading.
     ///
     /// - Parameter value: The value to expose to observers from creation.
     public init(_ value: Value) {
         self.phase = .success
-        self.latest = value
+        self.latestValue = .available(value)
     }
 
     // Work around swiftlang/swift#90385.
@@ -123,7 +160,7 @@ public final class ViewData<Value> {
     func set(_ value: Value) {
         currentLoadingToken = nil
         loadingFailure = nil
-        latest = value
+        latestValue = .available(value)
         phase = .success
         advanceAnimationValue()
     }
@@ -159,7 +196,7 @@ public final class ViewData<Value> {
     public func reset() {
         currentLoadingToken = nil
         loadingFailure = nil
-        latest = nil
+        latestValue = .unavailable
         phase = .empty
         advanceAnimationValue()
     }
@@ -184,7 +221,12 @@ extension ViewData {
             self.loadingFailure = nil
             phase = .failure(loadingFailure)
         } else {
-            phase = latest == nil ? .empty : .success
+            switch latestValue {
+            case .unavailable:
+                phase = .empty
+            case .available:
+                phase = .success
+            }
         }
         advanceAnimationValue()
     }

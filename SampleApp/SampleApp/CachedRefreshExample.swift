@@ -31,7 +31,7 @@ struct CachedRefreshExample: View {
         AsyncContent(
             viewModel.entries,
             loading: .placeholder(SampleEntry.placeholders),
-            failure: .cached
+            failure: .retained
         ) { entries, source in
             List {
                 Section {
@@ -67,14 +67,14 @@ struct CachedRefreshExample: View {
                     Label("Placeholder policy prefers the retained value", systemImage: "2.circle")
                     Label("One binding observes the long-lived stream", systemImage: "3.circle")
                     Label("Reload signals the existing producer", systemImage: "4.circle")
-                    Label("Failure can keep rendering the cache", systemImage: "5.circle")
+                    Label("Failure can keep rendering the retained value", systemImage: "5.circle")
                     Label("A one-shot load can update it in tandem", systemImage: "6.circle")
                 }
             }
             .accessibilityIdentifier(SampleAppAccessibility.cachedRefreshScreen)
         } failure: { error, retry in
             ContentUnavailableView {
-                Label("No cached entries", systemImage: "externaldrive.badge.exclamationmark")
+                Label("No retained entries", systemImage: "externaldrive.badge.exclamationmark")
             } description: {
                 Text(error.localizedDescription)
             } actions: {

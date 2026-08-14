@@ -24,56 +24,80 @@ import SwiftUI
 
 /// The origin of a value rendered by ``AsyncContent``.
 public enum AsyncContentSource: Hashable, Sendable {
-    /// The current successful value, whether supplied directly or by a bound source.
-    case live
+    /// The latest successful value, whether supplied directly or by a bound source.
+    case latest
 
     /// A previous successful value retained while the current phase is loading or failed.
-    case cached
+    case retained
 
     /// A fallback value supplied by ``AsyncContentLoadingPolicy/placeholder(_:)`` when no
     /// successful value exists.
     case placeholder
+
+    /// The latest successful value.
+    @available(*, deprecated, renamed: "latest")
+    public static var live: Self { .latest }
+
+    /// A previous successful value retained while loading or failed.
+    @available(*, deprecated, renamed: "retained")
+    public static var cached: Self { .retained }
 }
 
-/// Controls what ``AsyncContent`` renders while its data is loading.
+/// Controls what ``AsyncContent`` renders before a successful value exists and while its data is
+/// loading.
 public enum AsyncContentLoadingPolicy<Value> {
-    /// Renders no successful or placeholder content while the data is loading.
+    /// Renders no successful or placeholder content while the data is empty or loading.
     ///
     /// When loading begins from a presented failure, that failure remains visible until the
     /// destination receives another result.
     case hidden
 
-    /// Renders the latest successful value when one exists, and otherwise renders no content.
-    case cached
+    /// Renders the retained successful value when one exists, and otherwise renders no content.
+    case retained
 
-    /// Renders the latest successful value when one exists, falling back to a caller-supplied value.
+    /// Renders the retained successful value when one exists, falling back to a caller-supplied
+    /// value.
     ///
-    /// The retained value is marked with ``AsyncContentSource/cached``. The fallback value is
+    /// The retained value is marked with ``AsyncContentSource/retained``. The fallback value is
     /// marked with ``AsyncContentSource/placeholder``; it is presentation input and is never stored
     /// in the `ViewData` value.
     case placeholder(Value)
+
+    /// Renders the retained successful value when one exists, and otherwise renders no content.
+    @available(*, deprecated, renamed: "retained")
+    public static var cached: Self { .retained }
 }
 
 extension AsyncContentLoadingPolicy {
-    func presentation(latest: Value?) -> (value: Value, source: AsyncContentSource)? {
+    func presentation(retained: Value?) -> (value: Value, source: AsyncContentSource)? {
         switch self {
         case .hidden:
             nil
-        case .cached:
-            latest.map { ($0, .cached) }
+        case .retained:
+            retained.map { ($0, .retained) }
         case .placeholder(let placeholder):
-            latest.map { ($0, .cached) } ?? (placeholder, .placeholder)
+            retained.map { ($0, .retained) } ?? (placeholder, .placeholder)
         }
     }
 }
 
 /// Controls how ``AsyncContent`` uses its failure builder after its data fails.
 public enum AsyncContentFailurePolicy {
-    /// Renders the latest successful value when one exists, falling back to the failure builder otherwise.
-    case cached
+    /// Renders the retained successful value when one exists, falling back to the failure builder
+    /// otherwise.
+    case retained
 
-    /// Renders the failure builder instead of successful or cached content.
-    case replace
+    /// Renders the failure builder instead of successful or retained content.
+    case failureContent
+
+    /// Renders the retained successful value when one exists, falling back to the failure builder
+    /// otherwise.
+    @available(*, deprecated, renamed: "retained")
+    public static var cached: Self { .retained }
+
+    /// Renders the failure builder instead of successful or retained content.
+    @available(*, deprecated, renamed: "failureContent")
+    public static var replace: Self { .failureContent }
 }
 
 /// Controls what ``AsyncContent`` renders after failure when no failure builder is supplied.
@@ -81,18 +105,22 @@ public enum AsyncContentFailureFallbackPolicy {
     /// Renders no content for the failure.
     case hidden
 
-    /// Renders the latest successful value when one exists, and otherwise renders no content.
-    case cached
+    /// Renders the retained successful value when one exists, and otherwise renders no content.
+    case retained
+
+    /// Renders the retained successful value when one exists, and otherwise renders no content.
+    @available(*, deprecated, renamed: "retained")
+    public static var cached: Self { .retained }
 }
 
 private enum AsyncContentFailureRendering {
     case hidden
-    case cached
-    case replace
+    case retained
+    case failureContent
 }
 
 // Keep every value-backed phase in one case so SwiftUI preserves the content subtree when the
-// source changes between live, cached, and placeholder presentations.
+// source changes between latest, retained, and placeholder presentations.
 enum AsyncContentRendering<Value> {
     case hidden
     case content(Value, AsyncContentSource)
@@ -102,8 +130,8 @@ enum AsyncContentRendering<Value> {
 private extension AsyncContentFailurePolicy {
     var rendering: AsyncContentFailureRendering {
         switch self {
-        case .cached: .cached
-        case .replace: .replace
+        case .retained: .retained
+        case .failureContent: .failureContent
         }
     }
 }
@@ -112,7 +140,7 @@ private extension AsyncContentFailureFallbackPolicy {
     var rendering: AsyncContentFailureRendering {
         switch self {
         case .hidden: .hidden
-        case .cached: .cached
+        case .retained: .retained
         }
     }
 }
@@ -123,12 +151,12 @@ private extension AsyncContentFailureFallbackPolicy {
 /// apply only to the content produced by this instance, whether that content is a row, section, or
 /// larger region composed by the app.
 ///
-/// The empty phase renders `EmptyView`. Start an initial binding from a stable ancestor rather than
-/// a `.task` modifier attached directly to an empty `AsyncContent` value.
+/// The loading policy applies while the data is empty as well as loading. When that policy renders
+/// no content, start an initial binding from a stable ancestor rather than a `.task` modifier
+/// attached directly to the empty `AsyncContent` value.
 public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
-    private let data: ViewData<Value>
-    private let loadingPolicy: AsyncContentLoadingPolicy<Value>
-    private let failureRendering: AsyncContentFailureRendering
+    private let makeRendering: () -> AsyncContentRendering<Value>
+    private let retryAction: () -> ViewDataRetryAction?
     private let content: (Value, AsyncContentSource) -> Content
     private let failureContent: (any Error, ViewDataRetryAction?) -> FailureContent
 
@@ -140,37 +168,43 @@ public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
             case .content(let value, let source):
                 content(value, source)
             case .failure(let error):
-                failureContent(error, data.retryAction)
+                failureContent(error, retryAction())
             }
         }
     }
 
     /// Creates content with a dedicated failure view.
     ///
-    /// By default, loading renders the latest successful value when one exists, and a failure
+    /// By default, loading renders the retained successful value when one exists, and a failure
     /// replaces this content with the failure builder.
     ///
-    /// The failure builder runs for ``AsyncContentFailurePolicy/replace`` and for
-    /// ``AsyncContentFailurePolicy/cached`` when no latest successful value exists. It does not run
-    /// when the cached policy can render a retained value.
+    /// The failure builder runs for ``AsyncContentFailurePolicy/failureContent`` and for
+    /// ``AsyncContentFailurePolicy/retained`` when no retained successful value exists. It does not
+    /// run when the retained policy can render that value.
     ///
     /// - Parameters:
     ///   - data: The presentation state to render.
-    ///   - loading: The presentation used while `data` is loading.
+    ///   - loading: The presentation used while `data` is empty or loading.
     ///   - failure: The presentation used after `data` receives a failure.
-    ///   - content: A builder receiving the rendered value and whether it is live, cached, or a placeholder.
+    ///   - content: A builder receiving the rendered value and whether its source is latest,
+    ///     retained, or a placeholder.
     ///   - failureContent: A builder receiving the error and the binding's configured retry action, when available.
     public init(
         _ data: ViewData<Value>,
-        loading: AsyncContentLoadingPolicy<Value> = .cached,
-        failure: AsyncContentFailurePolicy = .replace,
+        loading: AsyncContentLoadingPolicy<Value> = .retained,
+        failure: AsyncContentFailurePolicy = .failureContent,
         @ViewBuilder content: @escaping (Value, AsyncContentSource) -> Content,
         @ViewBuilder failure failureContent: @escaping (any Error, ViewDataRetryAction?) -> FailureContent
     ) {
         self.init(
-            data,
-            loading: loading,
-            failureRendering: failure.rendering,
+            makeRendering: {
+                data.asyncContentRendering(
+                    loadingPolicy: loading,
+                    failureRendering: failure.rendering,
+                    project: { .some($0) }
+                )
+            },
+            retryAction: { data.retryAction },
             content: content,
             failureContent: failureContent
         )
@@ -178,43 +212,48 @@ public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
 
     /// Creates content without a dedicated failure view.
     ///
-    /// By default, loading and failure retain the latest successful value when one exists, and
+    /// By default, loading and failure render the retained successful value when one exists, and
     /// otherwise render nothing.
     ///
-    /// Use ``AsyncContentFailureFallbackPolicy/cached`` to retain previous successful content after
-    /// a failure, or ``AsyncContentFailureFallbackPolicy/hidden`` to render nothing. Replacement is
-    /// intentionally unavailable because this overload has no failure content to render.
+    /// Use ``AsyncContentFailureFallbackPolicy/retained`` to render retained successful content
+    /// after a failure, or ``AsyncContentFailureFallbackPolicy/hidden`` to render nothing.
+    /// ``AsyncContentFailurePolicy/failureContent`` is intentionally unavailable because this
+    /// overload has no failure content to render.
     ///
     /// - Parameters:
     ///   - data: The presentation state to render.
-    ///   - loading: The presentation used while `data` is loading.
+    ///   - loading: The presentation used while `data` is empty or loading.
     ///   - failure: The presentation used after `data` receives a failure.
-    ///   - content: A builder receiving the rendered value and whether it is live, cached, or a placeholder.
+    ///   - content: A builder receiving the rendered value and whether its source is latest,
+    ///     retained, or a placeholder.
     public init(
         _ data: ViewData<Value>,
-        loading: AsyncContentLoadingPolicy<Value> = .cached,
-        failure: AsyncContentFailureFallbackPolicy = .cached,
+        loading: AsyncContentLoadingPolicy<Value> = .retained,
+        failure: AsyncContentFailureFallbackPolicy = .retained,
         @ViewBuilder content: @escaping (Value, AsyncContentSource) -> Content
     ) where FailureContent == EmptyView {
         self.init(
-            data,
-            loading: loading,
-            failureRendering: failure.rendering,
+            makeRendering: {
+                data.asyncContentRendering(
+                    loadingPolicy: loading,
+                    failureRendering: failure.rendering,
+                    project: { .some($0) }
+                )
+            },
+            retryAction: { data.retryAction },
             content: content,
             failureContent: { _, _ in EmptyView() }
         )
     }
 
     private init(
-        _ data: ViewData<Value>,
-        loading: AsyncContentLoadingPolicy<Value>,
-        failureRendering: AsyncContentFailureRendering,
+        makeRendering: @escaping () -> AsyncContentRendering<Value>,
+        retryAction: @escaping () -> ViewDataRetryAction?,
         content: @escaping (Value, AsyncContentSource) -> Content,
         failureContent: @escaping (any Error, ViewDataRetryAction?) -> FailureContent
     ) {
-        self.data = data
-        self.loadingPolicy = loading
-        self.failureRendering = failureRendering
+        self.makeRendering = makeRendering
+        self.retryAction = retryAction
         self.content = content
         self.failureContent = failureContent
     }
@@ -222,37 +261,132 @@ public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
 
 extension AsyncContent {
     var rendering: AsyncContentRendering<Value> {
-        switch data.phase {
+        makeRendering()
+    }
+}
+
+extension AsyncContent {
+    /// Creates content by unwrapping each non-`nil` value, with a dedicated failure view.
+    ///
+    /// A successful `nil` value omits the content without changing the underlying ``ViewData``
+    /// phase. Loading and failure policies cannot present a retained `nil` as content. While the
+    /// phase is empty or loading, an explicit placeholder is still rendered because it is
+    /// non-optional presentation input.
+    ///
+    /// - Parameters:
+    ///   - data: The optional presentation state to render.
+    ///   - loading: The presentation used while `data` is empty or loading.
+    ///   - failure: The presentation used after `data` receives a failure.
+    ///   - content: A builder receiving the unwrapped value and whether its source is latest,
+    ///     retained, or a placeholder.
+    ///   - failureContent: A builder receiving the error and the binding's configured retry action, when available.
+    public init(
+        unwrapping data: ViewData<Value?>,
+        loading: AsyncContentLoadingPolicy<Value> = .retained,
+        failure: AsyncContentFailurePolicy = .failureContent,
+        @ViewBuilder content: @escaping (Value, AsyncContentSource) -> Content,
+        @ViewBuilder failure failureContent: @escaping (any Error, ViewDataRetryAction?) -> FailureContent
+    ) {
+        self.init(
+            makeRendering: {
+                data.asyncContentRendering(
+                    loadingPolicy: loading,
+                    failureRendering: failure.rendering,
+                    project: { $0 }
+                )
+            },
+            retryAction: { data.retryAction },
+            content: content,
+            failureContent: failureContent
+        )
+    }
+
+    /// Creates content by unwrapping each non-`nil` value, without a dedicated failure view.
+    ///
+    /// A successful `nil` value omits the content without changing the underlying ``ViewData``
+    /// phase. Loading and failure policies cannot present a retained `nil` as content. While the
+    /// phase is empty or loading, an explicit placeholder is still rendered because it is
+    /// non-optional presentation input.
+    ///
+    /// - Parameters:
+    ///   - data: The optional presentation state to render.
+    ///   - loading: The presentation used while `data` is empty or loading.
+    ///   - failure: The presentation used after `data` receives a failure.
+    ///   - content: A builder receiving the unwrapped value and whether its source is latest,
+    ///     retained, or a placeholder.
+    public init(
+        unwrapping data: ViewData<Value?>,
+        loading: AsyncContentLoadingPolicy<Value> = .retained,
+        failure: AsyncContentFailureFallbackPolicy = .retained,
+        @ViewBuilder content: @escaping (Value, AsyncContentSource) -> Content
+    ) where FailureContent == EmptyView {
+        self.init(
+            makeRendering: {
+                data.asyncContentRendering(
+                    loadingPolicy: loading,
+                    failureRendering: failure.rendering,
+                    project: { $0 }
+                )
+            },
+            retryAction: { data.retryAction },
+            content: content,
+            failureContent: { _, _ in EmptyView() }
+        )
+    }
+}
+
+private extension ViewData {
+    func asyncContentRendering<Output>(
+        loadingPolicy: AsyncContentLoadingPolicy<Output>,
+        failureRendering: AsyncContentFailureRendering,
+        project: (Value) -> Output?
+    ) -> AsyncContentRendering<Output> {
+        let projectedLatest: Output? = switch latestValue {
+        case .unavailable:
+            nil
+        case .available(let value):
+            project(value)
+        }
+
+        return switch phase {
         case .empty:
-            .hidden
-        case .loading:
-            loadingPolicy.presentation(latest: data.latest)
+            loadingPolicy.presentation(retained: projectedLatest)
                 .map { .content($0.value, $0.source) }
-                ?? retainedFailureRendering
+                ?? .hidden
+        case .loading:
+            loadingPolicy.presentation(retained: projectedLatest)
+                .map { .content($0.value, $0.source) }
+                ?? retainedFailureRendering(
+                    failureRendering: failureRendering,
+                    hasProjectedLatest: projectedLatest != nil
+                )
                 ?? .hidden
         case .success:
-            data.latest.map { .content($0, .live) } ?? .hidden
+            projectedLatest.map { .content($0, .latest) } ?? .hidden
         case .failure(let error):
             switch failureRendering {
             case .hidden:
                 .hidden
-            case .cached:
-                data.latest.map { .content($0, .cached) } ?? .failure(error)
-            case .replace:
+            case .retained:
+                projectedLatest.map { .content($0, .retained) } ?? .failure(error)
+            case .failureContent:
                 .failure(error)
             }
         }
     }
 
-    private var retainedFailureRendering: AsyncContentRendering<Value>? {
-        guard let error = data.loadingFailure else { return nil }
+    private func retainedFailureRendering<Output>(
+        failureRendering: AsyncContentFailureRendering,
+        hasProjectedLatest: Bool
+    ) -> AsyncContentRendering<Output>? {
+        guard let error = loadingFailure else { return nil }
 
         return switch failureRendering {
         case .hidden:
             nil
-        case .cached where data.latest != nil:
+        case .retained where hasProjectedLatest:
             nil
-        case .cached, .replace:
+        case .retained, .failureContent:
             .failure(error)
         }
     }

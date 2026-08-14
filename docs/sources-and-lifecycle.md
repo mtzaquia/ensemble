@@ -18,7 +18,7 @@ The method consumes the error into presentation state rather than rethrowing it.
 
 A load follows the lifetime of the task awaiting it. Cancellation is not presented as a failure:
 when no later update has replaced that load's loading transition, cancellation restores a failure
-that preceded loading, settles to cached success if a value exists, or settles to empty. A load
+that preceded loading, settles to retained success if a value exists, or settles to empty. A load
 does not install a retry action.
 
 A load and binding can feed the same destination in tandem. Starting either one does not cancel the
@@ -29,8 +29,23 @@ context.bind(useCase.values, to: entries)
 await context.load(useCase.fetch, to: entries)
 ```
 
-The latest accepted update determines the phase. The latest accepted success determines `latest`,
-because a later loading or failure update preserves that successful value.
+The latest accepted update determines `phase`. The latest accepted success determines
+`latestValue`, because a later loading or failure update preserves that successful value. These
+properties describe separate dimensions: `phase` reports current operation state, while
+`latestValue` reports whether a successful result has been retained.
+
+For optional state, availability distinguishes no successful result from a successful `nil`:
+
+```swift
+switch profile.latestValue {
+case .unavailable:
+  // No successful result has been supplied.
+case .available(nil):
+  // The successful result contains no profile.
+case .available(let profile?):
+  // The successful result contains a profile.
+}
+```
 
 ## Bind a result sequence
 
@@ -55,9 +70,9 @@ continuation.yield(.failure(.offline))
 continuation.yield(.success(recoveredEntries))
 ```
 
-The later success replaces `latest` and moves the destination back to success. A source may instead
-finish after either result when it represents one request per subscription. If iteration itself
-throws, the terminal error enters failure.
+The later success replaces `latestValue` and moves the destination back to success. A source may
+instead finish after either result when it represents one request per subscription. If iteration
+itself throws, the terminal error enters failure.
 
 ## Adapt a source-specific update type
 
@@ -155,9 +170,9 @@ let entries = ViewData(cachedEntries)
 ```
 
 The initial phase is successful. If a load or source starts later, the seeded value remains
-available as cached content while loading or after failure.
+available as retained content while loading or after failure.
 
-Reset presentation when both the lifecycle phase and cached value should be discarded:
+Reset presentation when both the lifecycle phase and retained value should be discarded:
 
 ```swift
 entries.reset()
@@ -171,7 +186,7 @@ state. Use `ViewDataContext.cancel(_:)` when the binding should stop, and cancel
 
 When a stream finishes without emitting while the destination is loading, the context restores a
 failure that preceded loading. Without a retained failure, it settles the state to success if a
-latest value exists and to empty otherwise. If the stream already emitted a success or failure,
+latest value is available and to empty otherwise. If the stream already emitted a success or failure,
 that phase remains visible. A later `.refresh` reload re-establishes a completed subscription
 before it invokes the producer action.
 
@@ -182,7 +197,7 @@ context.cancel(entries)
 ```
 
 Cancellation removes the retry action. A destination cancelled while loading restores the failure
-that preceded loading, settles to cached success, or settles to empty using the same rule as
+that preceded loading, settles to retained success, or settles to empty using the same rule as
 completion. An existing success or failure phase is preserved.
 
 Cancel every binding explicitly with `cancelAll()`, or release the context. Its deinitializer

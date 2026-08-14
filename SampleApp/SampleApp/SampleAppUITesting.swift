@@ -107,6 +107,7 @@ enum SampleAppAccessibility {
     static let loadingLabScreen = "sample.loading-lab.screen"
     static let loadingLabStage = "sample.loading-lab.stage"
     static let loadingLabStart = "sample.loading-lab.start"
+    static let loadingLabNoContent = "sample.loading-lab.no-content"
     static let loadingLabDeleteCache = "sample.loading-lab.delete-cache"
     static let loadingLabRestoreCache = "sample.loading-lab.restore-cache"
     static let loadingLabFailure = "sample.loading-lab.failure"
@@ -130,8 +131,8 @@ enum SampleAppAccessibility {
     static func entry(_ id: Int) -> String { "sample.entry.\(id)" }
     static func source(_ source: AsyncContentSource) -> String {
         switch source {
-        case .live: "sample.source.live"
-        case .cached: "sample.source.cached"
+        case .latest: "sample.source.latest"
+        case .retained: "sample.source.retained"
         case .placeholder: "sample.source.placeholder"
         }
     }

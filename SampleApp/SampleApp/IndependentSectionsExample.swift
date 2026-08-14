@@ -32,7 +32,7 @@ struct IndependentSectionsExample: View {
             AsyncContent(
                 viewModel.activity,
                 loading: .placeholder(SampleEntry.placeholders),
-                failure: .replace
+                failure: .failureContent
             ) { entries, source in
                 Section {
                     SampleEntryRows(entries: entries, source: source)
@@ -52,8 +52,8 @@ struct IndependentSectionsExample: View {
 
             AsyncContent(
                 viewModel.account,
-                loading: .cached,
-                failure: .cached
+                loading: .retained,
+                failure: .retained
             ) { entries, source in
                 Section {
                     SampleEntryRows(entries: entries, source: source)
@@ -74,7 +74,7 @@ struct IndependentSectionsExample: View {
             AsyncContent(
                 viewModel.tip,
                 loading: .hidden,
-                failure: .replace
+                failure: .failureContent
             ) { tip, source in
                 Section {
                     Text(tip)
@@ -163,7 +163,7 @@ private final class IndependentSectionsUseCase {
         let result: Result<[SampleEntry], SampleFailure> = accountAttempt == 1
             ? .failure(.offline)
             : .success([
-                SampleEntry(id: 400, title: "Account refreshed", detail: "Retry replaced the cached account value"),
+                SampleEntry(id: 400, title: "Account refreshed", detail: "Retry replaced the retained account value"),
             ])
         return DelayedSource(result: result, delay: .milliseconds(1_200)).values()
     }

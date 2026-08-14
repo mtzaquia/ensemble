@@ -6,18 +6,25 @@
 
 Pass an `AsyncContentLoadingPolicy` through the `loading` argument:
 
-| Policy | Rendering while loading | Content source |
+| Policy | Rendering while empty or loading | Content source |
 | --- | --- | --- |
 | `.hidden` | No successful or placeholder content | — |
-| `.cached` | The latest successful value when one exists; otherwise nothing | `.cached` |
-| `.placeholder(value)` | The latest successful value when one exists; otherwise the supplied placeholder | `.cached` or `.placeholder` |
+| `.retained` | The retained successful value when one exists; otherwise nothing | `.retained` |
+| `.placeholder(value)` | The retained successful value when one exists; otherwise the supplied placeholder | `.retained` or `.placeholder` |
 
 Loading policies control the successful-content builder; they do not hide a failure builder that
-was already presented. With `.hidden`, an initial load renders nothing, but retrying a replacement
+was already presented. With `.hidden`, an initial load renders nothing, but retrying a presented
 failure keeps that failure visible until the source succeeds or fails again. If a loading policy
-can supply cached or placeholder content, that content replaces the failure during the retry.
+can supply retained or placeholder content, that content replaces the failure during the retry.
 
-The default is `.cached`. Before the first successful value it renders nothing; on later loads it keeps the latest successful value visible. Use `.placeholder(value)` to show a skeleton on the first load while retaining useful content during refresh. Placeholder values are presentation input rather than successful data: Ensemble does not store them in `ViewData.latest`.
+The policy applies to an empty `ViewData` immediately, before a source changes its phase to
+loading. A `.placeholder(value)` therefore participates in the first layout pass instead of
+briefly rendering no content.
+
+The default is `.retained`. Before the first successful value it renders nothing; on later loads it
+keeps the retained successful value visible. Use `.placeholder(value)` to show a skeleton on the
+first load while retaining useful content during refresh. Placeholder values are presentation
+input rather than successful data: Ensemble does not store them in `ViewData.latestValue`.
 
 Use the `AsyncContentSource` passed to the success builder to adjust presentation without changing the data model:
 
@@ -33,7 +40,30 @@ AsyncContent(
 }
 ```
 
-When the phase is successful, the source is `.live` whether the value arrived from a load, a bound stream, or the initial-value initializer.
+When the phase is successful, the source is `.latest` whether the value arrived from a load, a
+bound stream, or the initial-value initializer. Ensemble marks a previous successful value as
+`.retained` while presenting it during loading or after failure; this does not make Ensemble the
+data's source of truth.
+
+## Render optional state
+
+Use the `unwrapping:` initializer when `ViewData` holds an optional domain value. Its content
+builder receives a non-optional value:
+
+```swift
+AsyncContent(unwrapping: viewModel.profile) { profile, source in
+  ProfileCard(profile: profile, source: source)
+}
+```
+
+A successful `nil` remains a successful result in `ViewData`, but this initializer omits its
+content. While empty or loading, an explicit `.placeholder(value)` still renders because the
+placeholder is non-optional presentation input. A retained `nil` does not count as retained
+content for this initializer.
+
+For direct state inspection, use `phase` for the current operation state and `latestValue` for
+successful-result availability. `.available(nil)` means the operation succeeded with an absent
+domain value; `.unavailable` means no successful result is retained.
 
 ## Animate presentation changes
 
@@ -48,8 +78,8 @@ AsyncContent(viewModel.entries) { entries, _ in
 
 `animationValue` is an opaque comparison value. It changes for every accepted
 presentation update, including loading, success, failure, reset, and retry availability. This
-means phase changes can animate even when `latest` is retained, such as failure UI using
-`.replace`.
+means phase changes can animate even when `latestValue` is retained, such as failure UI using
+`.failureContent`.
 
 The token does not retain or compare `Value`, so this works when the presented value is not
 `Equatable`. Reading it repeatedly without a presentation update returns an equal token, while
@@ -61,18 +91,20 @@ When supplying a failure builder, pass an `AsyncContentFailurePolicy` through th
 
 | Policy | Rendering after failure |
 | --- | --- |
-| `.cached` | The latest successful value when one exists; otherwise the failure builder |
-| `.replace` | The failure builder, even when a latest value exists |
+| `.retained` | The retained successful value when one exists; otherwise the failure builder |
+| `.failureContent` | The failure builder, even when a retained value exists |
 
-The default is `.replace`, making the presence of a failure builder an explicit choice to present failure UI.
+The default is `.failureContent`, making the presence of a failure builder an explicit choice to
+present failure UI.
 
-Use `.replace` when failed data should show the failure builder instead of live or retained content. It replaces only the content produced by that `AsyncContent` instance:
+Use `.failureContent` when failed data should show the failure builder instead of latest or
+retained content. It replaces only the content produced by that `AsyncContent` instance:
 
 ```swift
 AsyncContent(
   viewModel.profileSummary,
   loading: .placeholder(ProfileSummary.placeholder),
-  failure: .replace
+  failure: .failureContent
 ) { summary, source in
   ProfileSummaryCard(summary: summary)
     .redacted(reason: source == .placeholder ? .placeholder : [])
@@ -91,16 +123,19 @@ AsyncContent(
 }
 ```
 
-Use `.cached` for refreshable UI where stale content remains useful. The successful-content builder receives source `.cached`, allowing the view to mark the content as retained or stale.
+Use `.retained` for refreshable UI where previous content remains useful. The successful-content
+builder receives source `.retained`, allowing the view to mark that content as retained or stale.
 
 When omitting the failure builder, the initializer instead accepts `AsyncContentFailureFallbackPolicy`:
 
 | Policy | Rendering after failure |
 | --- | --- |
 | `.hidden` | Nothing |
-| `.cached` | The latest successful value when one exists; otherwise nothing |
+| `.retained` | The retained successful value when one exists; otherwise nothing |
 
-The default is `.cached`. The separate policy types make invalid combinations unavailable: `.replace` requires failure content, while `.hidden` cannot be paired with an unreachable failure builder.
+The default is `.retained`. The separate policy types make invalid combinations unavailable:
+`.failureContent` requires a failure builder, while `.hidden` cannot be paired with an unreachable
+failure builder.
 
 The optional retry action uses the configured
 [reload behavior](sources-and-lifecycle.md#choose-binding-reload-behavior). It remains available
@@ -117,7 +152,7 @@ List {
   AsyncContent(
     viewModel.activity,
     loading: .placeholder(Activity.placeholders),
-    failure: .replace
+    failure: .failureContent
   ) { activity, source in
     ActivitySection(activity: activity, source: source)
   } failure: { error, retry in
@@ -126,8 +161,8 @@ List {
 
   AsyncContent(
     viewModel.account,
-    loading: .cached,
-    failure: .cached
+    loading: .retained,
+    failure: .retained
   ) { account, source in
     AccountSection(account: account, source: source)
   }

@@ -10,7 +10,7 @@ features.
 
 A `ViewData` value remembers the latest successful data and its current lifecycle phase.
 A `ViewDataContext` feeds it from one-shot asynchronous operations or asynchronous sequences,
-while `AsyncContent` decides whether a view should show live data, retained data, placeholders,
+while `AsyncContent` decides whether a view should show the latest data, retained data, placeholders,
 a failure, or nothing.
 
 - Seed presentation state immediately, load one value, or bind a stream of updates.
@@ -62,7 +62,7 @@ final class EntriesUseCase {
   func values() -> AsyncStream<Result<[Entry], EntryFailure>> {
     AsyncStream { continuation in
       continuation.yield(.success([
-        Entry(id: 1, title: "A live value"),
+        Entry(id: 1, title: "The latest value"),
       ]))
       continuation.finish()
     }
@@ -127,16 +127,16 @@ That is the core idea: bind observable presentation data once, then render its l
 
 - [Getting started](docs/getting-started.md) — connect a source, choose its reload behavior, and
   render the first result.
-- [Presentation policies](docs/presentation-policies.md) — choose placeholder, cached, hidden, and
-  replacement behavior per view.
+- [Presentation policies](docs/presentation-policies.md) — choose placeholder, retained, hidden,
+  and failure-content behavior per view.
 - [Sources and lifecycle](docs/sources-and-lifecycle.md) — adapt source update types and understand
   reload, reset, completion, and cancellation.
 - [Diagnostics](docs/diagnostics.md) — inspect load, binding, reload, and cancellation activity.
 
 ## Sample app
 
-Open [`SampleApp/SampleApp.xcodeproj`](SampleApp/SampleApp.xcodeproj) to explore replacement failure
-UI, seeded content retained through refresh, and independently loading sections.
+Open [`SampleApp/SampleApp.xcodeproj`](SampleApp/SampleApp.xcodeproj) to explore dedicated failure
+content, seeded content retained through refresh, and independently loading sections.
 
 ## License
 
