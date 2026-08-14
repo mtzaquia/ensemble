@@ -31,6 +31,7 @@ enum SampleScenario: String, CaseIterable, Identifiable {
     case loadingLab = "loading-lab"
     case screenReplacement = "screen-replacement"
     case cachedRefresh = "cached-refresh"
+    case animatedReordering = "animated-reordering"
     case independentSections = "independent-sections"
 
     var id: Self { self }
@@ -40,6 +41,7 @@ enum SampleScenario: String, CaseIterable, Identifiable {
         case .loadingLab: "Loading lab"
         case .screenReplacement: "Screen replacement"
         case .cachedRefresh: "Cached refresh"
+        case .animatedReordering: "Animated reordering"
         case .independentSections: "Independent sections"
         }
     }
@@ -52,6 +54,8 @@ enum SampleScenario: String, CaseIterable, Identifiable {
             "Placeholder loading, a blocking failure, and retry."
         case .cachedRefresh:
             "Seeded data remains visible through loading and failure."
+        case .animatedReordering:
+            "Stable-ID rows animate into their new positions after one accepted update."
         case .independentSections:
             "Several streams drive separate parts of one list."
         }
@@ -62,6 +66,7 @@ enum SampleScenario: String, CaseIterable, Identifiable {
         case .loadingLab: "slider.horizontal.3"
         case .screenReplacement: "rectangle.portrait.slash"
         case .cachedRefresh: "arrow.trianglehead.2.clockwise.rotate.90"
+        case .animatedReordering: "arrow.up.arrow.down"
         case .independentSections: "rectangle.3.group"
         }
     }
@@ -78,6 +83,8 @@ struct ScenarioDestination: View {
             ScreenReplacementExample()
         case .cachedRefresh:
             CachedRefreshExample()
+        case .animatedReordering:
+            AnimatedReorderingExample()
         case .independentSections:
             IndependentSectionsExample()
         }
@@ -123,6 +130,9 @@ enum SampleAppAccessibility {
     static let cachedRefreshSuccess = "sample.cached-refresh.success"
     static let cachedRefreshFailure = "sample.cached-refresh.failure"
     static let cachedRefreshDirect = "sample.cached-refresh.direct"
+
+    static let animatedReorderingScreen = "sample.animated-reordering.screen"
+    static let animatedReorderingReverse = "sample.animated-reordering.reverse"
 
     static let independentSectionsScreen = "sample.independent-sections.screen"
     static let independentSectionsReload = "sample.independent-sections.reload"

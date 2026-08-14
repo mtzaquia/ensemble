@@ -20,6 +20,7 @@
 //  SOFTWARE.
 //
 
+import Observation
 import Testing
 @testable import Ensemble
 
@@ -134,6 +135,55 @@ struct ViewDataTests {
         data.fail(TestError.expected)
         let repeatedFailure = data.animationValue
         #expect(failure != repeatedFailure)
+    }
+
+    @Test("A successful update invalidates presentation in one observation cycle")
+    func successfulUpdateIsCoherent() {
+        let data = ViewData([1, 2, 3])
+        let initialAnimationValue = data.animationValue
+        let observation = ViewDataPresentationObservation(data)
+
+        observation.start()
+        data.set([3, 2, 1])
+
+        #expect(observation.cycles == 1)
+        #expect(data.isSuccessful)
+        #expect(data.latestValue == .available([3, 2, 1]))
+        #expect(data.animationValue != initialAnimationValue)
+    }
+
+    @Test("Every accepted presentation transition invalidates once")
+    func presentationTransitionsAreCoherent() {
+        let data = ViewData<Int>()
+        let observation = ViewDataPresentationObservation(data)
+        observation.start()
+
+        let emptyLoading = data.beginLoading()
+        #expect(observation.cycles == 1)
+        data.finishLoading(emptyLoading)
+        #expect(observation.cycles == 2)
+
+        data.set(42)
+        #expect(observation.cycles == 3)
+        let retainedLoading = data.beginLoading()
+        #expect(observation.cycles == 4)
+        data.finishLoading(retainedLoading)
+        #expect(observation.cycles == 5)
+
+        data.fail(TestError.expected)
+        #expect(observation.cycles == 6)
+        let failedLoading = data.beginLoading()
+        #expect(observation.cycles == 7)
+        data.finishLoading(failedLoading)
+        #expect(observation.cycles == 8)
+
+        data.installRetryAction(ViewDataRetryAction {})
+        #expect(observation.cycles == 9)
+        data.removeRetryAction()
+        #expect(observation.cycles == 10)
+
+        data.reset()
+        #expect(observation.cycles == 11)
     }
 
     @Test("A failure result does not end the subscription")
@@ -573,6 +623,30 @@ struct ViewDataTests {
 
         #expect(await eventually { data.isSuccessful })
         #expect(data.latestValue == .available(42))
+    }
+}
+
+@MainActor
+private final class ViewDataPresentationObservation<Value> {
+    let data: ViewData<Value>
+    private(set) var cycles = 0
+
+    init(_ data: ViewData<Value>) {
+        self.data = data
+    }
+
+    func start() {
+        withObservationTracking {
+            _ = data.phase
+            _ = data.latestValue
+            _ = data.animationValue
+        } onChange: { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.cycles += 1
+                self.start()
+            }
+        }
     }
 }
 

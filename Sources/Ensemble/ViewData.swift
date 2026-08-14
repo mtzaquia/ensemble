@@ -98,15 +98,28 @@ public final class ViewData<Value> {
         case failure(any Error)
     }
 
+    private struct Presentation {
+        var phase: Phase
+        var latestValue: ViewDataAvailability<Value>
+        var retryAction: ViewDataRetryAction?
+        var animationValue = ViewDataAnimationValue()
+    }
+
+    private var presentation: Presentation
+
     /// The current lifecycle phase, including the latest error when the phase is failed.
-    public private(set) var phase: Phase
+    public var phase: Phase {
+        presentation.phase
+    }
 
     /// The availability of the most recently supplied successful value.
     ///
     /// Loading and failure updates preserve this availability. ``reset()`` changes it to
     /// ``ViewDataAvailability/unavailable``. When `Value` is optional, `.available(nil)` represents
     /// a successful result whose domain value is absent.
-    public private(set) var latestValue: ViewDataAvailability<Value> = .unavailable
+    public var latestValue: ViewDataAvailability<Value> {
+        presentation.latestValue
+    }
 
     /// The most recently supplied successful value, represented as an optional property.
     ///
@@ -130,16 +143,24 @@ public final class ViewData<Value> {
     ///
     /// The value changes after every accepted presentation update and does not retain or require
     /// an equatable `Value`. Pass it to SwiftUI's `animation(_:value:)` modifier.
-    public private(set) var animationValue = ViewDataAnimationValue()
+    public var animationValue: ViewDataAnimationValue {
+        presentation.animationValue
+    }
 
-    var retryAction: ViewDataRetryAction?
+    var retryAction: ViewDataRetryAction? {
+        presentation.retryAction
+    }
     @ObservationIgnored private var nextLoadingToken: UInt = 0
     @ObservationIgnored private var currentLoadingToken: UInt?
     @ObservationIgnored private(set) var loadingFailure: (any Error)?
 
     /// Creates empty presentation state.
     public init() {
-        self.phase = .empty
+        self.presentation = Presentation(
+            phase: .empty,
+            latestValue: .unavailable,
+            retryAction: nil
+        )
     }
 
     /// Creates successful presentation state with an initial value.
@@ -149,8 +170,11 @@ public final class ViewData<Value> {
     ///
     /// - Parameter value: The value to expose to observers from creation.
     public init(_ value: Value) {
-        self.phase = .success
-        self.latestValue = .available(value)
+        self.presentation = Presentation(
+            phase: .success,
+            latestValue: .available(value),
+            retryAction: nil
+        )
     }
 
     // Work around swiftlang/swift#90385.
@@ -160,16 +184,18 @@ public final class ViewData<Value> {
     func set(_ value: Value) {
         currentLoadingToken = nil
         loadingFailure = nil
-        latestValue = .available(value)
-        phase = .success
-        advanceAnimationValue()
+        updatePresentation {
+            $0.latestValue = .available(value)
+            $0.phase = .success
+        }
     }
 
     func fail(_ error: any Error) {
         currentLoadingToken = nil
         loadingFailure = nil
-        phase = .failure(error)
-        advanceAnimationValue()
+        updatePresentation {
+            $0.phase = .failure(error)
+        }
     }
 
     @discardableResult
@@ -183,8 +209,9 @@ public final class ViewData<Value> {
         } else {
             loadingFailure = nil
         }
-        phase = .loading
-        advanceAnimationValue()
+        updatePresentation {
+            $0.phase = .loading
+        }
         return nextLoadingToken
     }
 
@@ -196,22 +223,25 @@ public final class ViewData<Value> {
     public func reset() {
         currentLoadingToken = nil
         loadingFailure = nil
-        latestValue = .unavailable
-        phase = .empty
-        advanceAnimationValue()
+        updatePresentation {
+            $0.latestValue = .unavailable
+            $0.phase = .empty
+        }
     }
 }
 
 extension ViewData {
     func installRetryAction(_ action: ViewDataRetryAction) {
-        retryAction = action
-        advanceAnimationValue()
+        updatePresentation {
+            $0.retryAction = action
+        }
     }
 
     func removeRetryAction() {
         guard retryAction != nil else { return }
-        retryAction = nil
-        advanceAnimationValue()
+        updatePresentation {
+            $0.retryAction = nil
+        }
     }
 
     func finishLoading(_ token: UInt) {
@@ -219,19 +249,26 @@ extension ViewData {
         currentLoadingToken = nil
         if let loadingFailure {
             self.loadingFailure = nil
-            phase = .failure(loadingFailure)
+            updatePresentation {
+                $0.phase = .failure(loadingFailure)
+            }
         } else {
-            switch latestValue {
+            let phase: Phase = switch latestValue {
             case .unavailable:
-                phase = .empty
+                .empty
             case .available:
-                phase = .success
+                .success
+            }
+            updatePresentation {
+                $0.phase = phase
             }
         }
-        advanceAnimationValue()
     }
 
-    private func advanceAnimationValue() {
-        animationValue = animationValue.advanced()
+    private func updatePresentation(_ update: (inout Presentation) -> Void) {
+        var nextPresentation = presentation
+        update(&nextPresentation)
+        nextPresentation.animationValue = nextPresentation.animationValue.advanced()
+        presentation = nextPresentation
     }
 }
