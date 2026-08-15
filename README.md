@@ -5,6 +5,8 @@
 [![iOS 17+](https://img.shields.io/badge/iOS-17%2B-blue.svg)](https://github.com/mtzaquia/ensemble/blob/main/Package.swift)
 ![Class B](https://img.shields.io/badge/class-B-silver)
 
+<a href="https://www.buymeacoffee.com/mtzaquia" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" style="height: 30px !important;" ></a>
+
 `Ensemble` is a SwiftUI presentation-state library for composing self-contained, reloadable
 features.
 
