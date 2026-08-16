@@ -26,34 +26,52 @@ import SwiftUI
 
 struct AnimatedReorderingExample: View {
     @State private var viewModel = AnimatedReorderingViewModel()
+    @State private var animatesRows = true
 
     var body: some View {
         List {
-            AsyncContent(viewModel.entries) { entries, source in
+            Section("Unanimated sibling") {
+                Text("Sibling update \(viewModel.siblingRevision)")
+                    .accessibilityIdentifier(SampleAppAccessibility.animatedReorderingSibling)
+                Text("This section changes in the same action without joining the row transition.")
+                    .foregroundStyle(.secondary)
+            }
+
+            AsyncContent(
+                viewModel.entries,
+                animation: animatesRows ? .default : nil
+            ) { entries, source in
                 Section {
                     SampleEntryRows(entries: entries, source: source)
                 } header: {
                     Text("Stable-ID rows")
                 } footer: {
-                    Text("The List receives the reordered value and animation revision in one observable presentation update.")
-                }
-
-                Section("Action") {
-                    Button("Reverse row order") {
-                        viewModel.reverseRowOrder()
-                    }
-                    .accessibilityIdentifier(SampleAppAccessibility.animatedReorderingReverse)
-                }
-
-                Section("What this shows") {
-                    Label("Rows keep the same identities", systemImage: "number")
-                    Label("ViewData accepts the reordered value", systemImage: "arrow.up.arrow.down")
-                    Label("animationValue drives the List animation", systemImage: "sparkles")
+                    Text("AsyncContent supplies the transaction List uses for this structural update.")
                 }
             }
-            .accessibilityIdentifier(SampleAppAccessibility.animatedReorderingScreen)
+
+            Section("Action") {
+                Toggle("Animate row changes", isOn: $animatesRows)
+                    .accessibilityIdentifier(SampleAppAccessibility.animatedReorderingAnimation)
+
+                Button("Update sibling and reverse rows") {
+                    viewModel.updateBoth()
+                }
+                .accessibilityIdentifier(SampleAppAccessibility.animatedReorderingReverse)
+            }
+
+            Section("What this shows") {
+                Label("Rows keep the same identities", systemImage: "number")
+                Label(
+                    animatesRows
+                        ? "A supplied animation moves only these rows"
+                        : "An explicit nil disables animation for these rows",
+                    systemImage: animatesRows ? "sparkles" : "sparkles.slash"
+                )
+                Label("The sibling starts from its new position", systemImage: "rectangle.topthird.inset.filled")
+            }
         }
-        .animation(.default, value: viewModel.entries.animationValue)
+        .accessibilityIdentifier(SampleAppAccessibility.animatedReorderingScreen)
         .navigationTitle("Animated reordering")
     }
 }
@@ -61,6 +79,7 @@ struct AnimatedReorderingExample: View {
 @Observable
 private final class AnimatedReorderingViewModel {
     let entries: ViewData<[SampleEntry]>
+    private(set) var siblingRevision = 0
 
     @ObservationIgnored private let context = ViewDataContext()
     @ObservationIgnored private var isReversed = false
@@ -69,7 +88,8 @@ private final class AnimatedReorderingViewModel {
         entries = ViewData(Self.originalEntries)
     }
 
-    func reverseRowOrder() {
+    func updateBoth() {
+        siblingRevision += 1
         isReversed.toggle()
         let nextEntries = isReversed ? Array(Self.originalEntries.reversed()) : Self.originalEntries
 

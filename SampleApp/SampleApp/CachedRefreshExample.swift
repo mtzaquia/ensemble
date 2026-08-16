@@ -31,6 +31,7 @@ struct CachedRefreshExample: View {
         AsyncContent(
             viewModel.entries,
             loading: .placeholder(SampleEntry.placeholders),
+            animation: .default,
             failure: .retained
         ) { entries, source in
             List {
@@ -83,7 +84,6 @@ struct CachedRefreshExample: View {
                 }
             }
         }
-        .animation(.default, value: viewModel.entries.animationValue)
         .navigationTitle("Cached refresh")
         .task {
             viewModel.start()

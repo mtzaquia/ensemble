@@ -1,6 +1,8 @@
 # Presentation policies
 
-`AsyncContent` maps one `ViewData` phase to SwiftUI without adding a `List`, `Section`, stack, or other layout container. Loading and failure policies belong at the call site, so two views can present the same state differently.
+`AsyncContent` maps one `ViewData` phase to SwiftUI without adding a `List`, `Section`, stack, or
+other layout container. Loading, failure, and animation behavior belong at the call site, so two
+views can present the same state differently.
 
 ## Choose loading behavior
 
@@ -67,23 +69,67 @@ domain value; `.unavailable` means no successful result is retained.
 
 ## Animate presentation changes
 
-Use `ViewData.animationValue` with SwiftUI's scoped animation modifier:
+Pass an animation directly to the `AsyncContent` whose presentation should change:
 
 ```swift
-AsyncContent(viewModel.entries) { entries, _ in
-  EntryRows(entries)
+List {
+  AsyncContent(viewModel.entries, animation: .default) { entries, _ in
+    EntrySection(entries)
+  }
+}
+```
+
+`AsyncContent` applies the animation when it presents an accepted loading, success, failure,
+reset, or retry-availability change. Applying the transaction at that boundary lets containers
+such as `List` observe row and section changes without attaching an animation modifier to the
+whole container. Unrelated state that changed alongside the `ViewData` update is therefore not
+pulled into the same animation.
+
+The presence of the argument is meaningful:
+
+| Call | Presentation transaction |
+| --- | --- |
+| Omit `animation` | Inherit the surrounding transaction |
+| Pass a non-`nil` animation | Apply that animation locally |
+| Pass `animation: nil` | Disable animation locally, including an inherited animation |
+
+This makes explicit disabling available at the same boundary:
+
+```swift
+AsyncContent(viewModel.entries, animation: nil) { entries, _ in
+  EntrySection(entries)
+}
+```
+
+When an explicitly animated `AsyncContent` receives an equal `Equatable` value while already
+successful, it renders the newly supplied value without applying its animation. An `AsyncContent`
+that omits `animation` continues to inherit the caller's transaction. Values without `Equatable`
+conformance are treated as changed whenever they are received.
+
+### Coordinate a larger hierarchy
+
+`ViewData.animationValue` is the advanced path for deliberately coordinating several views or a
+larger container around the same presentation transition:
+
+```swift
+VStack {
+  AsyncContent(viewModel.entries) { entries, _ in
+    EntryRows(entries)
+  }
+
+  EntriesSummary(phase: viewModel.entries.phase)
 }
 .animation(.default, value: viewModel.entries.animationValue)
 ```
 
-`animationValue` is an opaque comparison value. It changes for every accepted
-presentation update, including loading, success, failure, reset, and retry availability. This
-means phase changes can animate even when `latestValue` is retained, such as failure UI using
-`.failureContent`.
+The modifier applies to every animatable change in its subtree during that update. Do not attach it
+to a `List` or screen ancestor merely to animate one `AsyncContent`; use that instance's `animation`
+parameter instead.
 
-The token does not retain or compare `Value`, so this works when the presented value is not
-`Equatable`. Reading it repeatedly without a presentation update returns an equal token, while
-tokens from different `ViewData` instances compare unequal.
+`animationValue` changes with the same accepted presentation transitions that drive the initializer
+animation. It is opaque and does not retain or compare `Value`, so it works when the presented value
+is not `Equatable`. Reading it repeatedly without a presentation update returns an equal token,
+while tokens from different `ViewData` instances compare unequal.
 
 ## Choose failure behavior
 
@@ -169,6 +215,8 @@ List {
 }
 ```
 
-The outer `List` stays mounted while each section moves through its own phase. An app can also place `AsyncContent` around a larger composed region, but that is ordinary SwiftUI composition rather than a separate whole-screen failure mode in Ensemble.
+The outer `List` stays mounted while each section moves through its own phase. An app can also place
+`AsyncContent` around a larger composed region, but that is ordinary SwiftUI composition rather
+than a separate whole-screen failure mode in Ensemble.
 
 Next: [Getting started](getting-started.md) · [Sources and lifecycle](sources-and-lifecycle.md)

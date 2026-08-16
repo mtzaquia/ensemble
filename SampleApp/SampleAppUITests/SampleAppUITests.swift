@@ -129,6 +129,43 @@ nonisolated final class SampleAppUITests: XCTestCase {
     }
 
     @MainActor
+    func testAnimatedPresentationUpdatesAlongsideItsSibling() {
+        launch(.animatedReordering)
+
+        XCTAssertTrue(element(A11y.animatedReorderingScreen).waitForExistence(timeout: 3))
+        XCTAssertEqual(element(A11y.animatedReorderingSibling).label, "Sibling update 0")
+        let first = app.staticTexts.matching(identifier: A11y.entry(501)).firstMatch
+        let third = app.staticTexts.matching(identifier: A11y.entry(503)).firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 2))
+        XCTAssertTrue(third.exists)
+        XCTAssertLessThan(first.frame.minY, third.frame.minY)
+
+        let update = app.buttons[A11y.animatedReorderingReverse]
+        scrollUntilHittable(update, direction: .up)
+        update.tap()
+
+        XCTAssertTrue(waitForLabelContaining(
+            "Sibling update 1",
+            on: element(A11y.animatedReorderingSibling)
+        ))
+        scrollUntilHittable(third, direction: .down)
+        XCTAssertLessThan(third.frame.minY, first.frame.minY)
+
+        let animation = app.switches[A11y.animatedReorderingAnimation]
+        scrollUntilHittable(animation, direction: .up)
+        animation.tap()
+        scrollUntilHittable(update, direction: .up)
+        update.tap()
+
+        XCTAssertTrue(waitForLabelContaining(
+            "Sibling update 2",
+            on: element(A11y.animatedReorderingSibling)
+        ))
+        scrollUntilHittable(first, direction: .down)
+        XCTAssertLessThan(first.frame.minY, third.frame.minY)
+    }
+
+    @MainActor
     private func launch(_ scenario: Scenario) {
         continueAfterFailure = false
         app = XCUIApplication()
@@ -185,6 +222,7 @@ private enum Scenario: String {
     case loadingLab = "loading-lab"
     case screenReplacement = "screen-replacement"
     case cachedRefresh = "cached-refresh"
+    case animatedReordering = "animated-reordering"
     case independentSections = "independent-sections"
 }
 
@@ -202,6 +240,11 @@ private enum A11y {
     static let cachedRefreshSuccess = "sample.cached-refresh.success"
     static let cachedRefreshFailure = "sample.cached-refresh.failure"
     static let cachedRefreshDirect = "sample.cached-refresh.direct"
+
+    static let animatedReorderingScreen = "sample.animated-reordering.screen"
+    static let animatedReorderingReverse = "sample.animated-reordering.reverse"
+    static let animatedReorderingSibling = "sample.animated-reordering.sibling"
+    static let animatedReorderingAnimation = "sample.animated-reordering.animation"
 
     static let independentSectionsScreen = "sample.independent-sections.screen"
     static let independentSectionsReload = "sample.independent-sections.reload"

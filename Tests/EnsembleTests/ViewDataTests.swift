@@ -155,6 +155,7 @@ struct ViewDataTests {
         let replacement = Model(id: 42)
         let data = ViewData(initial)
         let animationValue = data.animationValue
+        let presentationRevision = data.presentationRevision
         let observation = ViewDataPresentationObservation(data)
         observation.start()
 
@@ -162,6 +163,7 @@ struct ViewDataTests {
 
         #expect(observation.cycles == 1)
         #expect(data.animationValue == animationValue)
+        #expect(data.presentationRevision != presentationRevision)
         if case .available(let latest) = data.latestValue {
             #expect(latest === replacement)
         } else {
@@ -201,6 +203,7 @@ struct ViewDataTests {
     func successfulUpdateIsCoherent() {
         let data = ViewData([1, 2, 3])
         let initialAnimationValue = data.animationValue
+        let initialPresentationRevision = data.presentationRevision
         let observation = ViewDataPresentationObservation(data)
 
         observation.start()
@@ -210,6 +213,7 @@ struct ViewDataTests {
         #expect(data.isSuccessful)
         #expect(data.latestValue == .available([3, 2, 1]))
         #expect(data.animationValue != initialAnimationValue)
+        #expect(data.presentationRevision != initialPresentationRevision)
     }
 
     @Test("Every accepted presentation transition invalidates once")
@@ -700,6 +704,7 @@ private final class ViewDataPresentationObservation<Value> {
             _ = data.phase
             _ = data.latestValue
             _ = data.animationValue
+            _ = data.presentationRevision
         } onChange: { [weak self] in
             MainActor.assumeIsolated {
                 guard let self else { return }

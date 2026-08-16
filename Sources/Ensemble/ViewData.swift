@@ -23,12 +23,16 @@
 import Foundation
 import Observation
 
-/// An opaque, immutable comparison value for animating changes exposed by ``ViewData``.
+/// An opaque comparison value for intentionally coordinating animations beyond one
+/// ``AsyncContent`` presentation.
 ///
-/// Compare this value with SwiftUI's `animation(_:value:)` modifier to animate accepted
-/// presentation changes. Values from different `ViewData` instances compare unequal, and the value
-/// changes when its instance enters another lifecycle phase, receives a changed value or error,
-/// resets, or changes retry availability.
+/// Prefer the `animation` parameter on ``AsyncContent`` when animating that content. Use this value
+/// with SwiftUI's `animation(_:value:)` modifier only when several views or a larger container
+/// should deliberately share the same animation transaction.
+///
+/// Values from different `ViewData` instances compare unequal. The value changes when its instance
+/// enters another lifecycle phase, receives a changed value or error, resets, or changes retry
+/// availability.
 ///
 /// When `ViewData` is already successful, receiving another value that compares equal to the latest
 /// value does not change this comparison value. The newly supplied value is still retained. Values
@@ -53,6 +57,12 @@ public struct ViewDataAnimationValue: Equatable, Sendable {
     fileprivate func advanced() -> Self {
         Self(sourceID: sourceID, revision: revision &+ 1)
     }
+}
+
+// Drives view-local presentation mirroring even when an equal value suppresses animation.
+struct ViewDataPresentationRevision: Equatable, Sendable {
+    fileprivate let sourceID: UUID
+    fileprivate let revision: UInt
 }
 
 /// The availability of a successful value retained by ``ViewData``.
@@ -111,6 +121,7 @@ public final class ViewData<Value> {
         var latestValue: ViewDataAvailability<Value>
         var retryAction: ViewDataRetryAction?
         var animationValue = ViewDataAnimationValue()
+        var revision: UInt = 0
     }
 
     private var presentation: Presentation
@@ -147,14 +158,24 @@ public final class ViewData<Value> {
         }
     }
 
-    /// An opaque comparison value for animating the current presentation.
+    /// An opaque comparison value for intentionally coordinating a larger animation.
     ///
     /// The value changes after every accepted presentation change. When the phase is already
     /// successful, receiving an equal `Value` retains that value without changing this comparison
-    /// value. A non-equatable `Value` is always treated as changed. Pass this value to SwiftUI's
-    /// `animation(_:value:)` modifier.
+    /// value. A non-equatable `Value` is always treated as changed.
+    ///
+    /// Prefer the `animation` parameter on ``AsyncContent`` for its presentation. Pass this value
+    /// to SwiftUI's `animation(_:value:)` modifier only when several views or a larger container
+    /// should deliberately animate together.
     public var animationValue: ViewDataAnimationValue {
         presentation.animationValue
+    }
+
+    var presentationRevision: ViewDataPresentationRevision {
+        ViewDataPresentationRevision(
+            sourceID: presentation.animationValue.sourceID,
+            revision: presentation.revision
+        )
     }
 
     var retryAction: ViewDataRetryAction? {
@@ -303,6 +324,7 @@ extension ViewData {
         if advancingAnimation {
             nextPresentation.animationValue = nextPresentation.animationValue.advanced()
         }
+        nextPresentation.revision &+= 1
         presentation = nextPresentation
     }
 }

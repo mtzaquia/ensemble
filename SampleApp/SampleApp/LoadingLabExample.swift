@@ -33,6 +33,7 @@ struct LoadingLabExample: View {
                 AsyncContent(
                     unwrapping: viewModel.entries,
                     loading: .placeholder(SampleEntry.placeholders),
+                    animation: .default,
                     failure: .retained
                 ) { entries, source in
                     SampleEntryRows(entries: entries, source: source)
@@ -186,7 +187,6 @@ struct LoadingLabExample: View {
                 Label("Enable failure to compare failure with and without retained content.", systemImage: "exclamationmark.arrow.trianglehead.2.clockwise.rotate.90")
             }
         }
-        .animation(.default, value: viewModel.entries.animationValue)
         .accessibilityIdentifier(SampleAppAccessibility.loadingLabScreen)
         .navigationTitle("Loading lab")
         .task {

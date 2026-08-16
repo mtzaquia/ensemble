@@ -32,6 +32,7 @@ struct IndependentSectionsExample: View {
             AsyncContent(
                 viewModel.activity,
                 loading: .placeholder(SampleEntry.placeholders),
+                animation: .default,
                 failure: .failureContent
             ) { entries, source in
                 Section {
@@ -53,6 +54,7 @@ struct IndependentSectionsExample: View {
             AsyncContent(
                 viewModel.account,
                 loading: .retained,
+                animation: .default,
                 failure: .retained
             ) { entries, source in
                 Section {
@@ -74,6 +76,7 @@ struct IndependentSectionsExample: View {
             AsyncContent(
                 viewModel.tip,
                 loading: .hidden,
+                animation: .default,
                 failure: .failureContent
             ) { tip, source in
                 Section {
@@ -100,9 +103,6 @@ struct IndependentSectionsExample: View {
                 .accessibilityIdentifier(SampleAppAccessibility.independentSectionsReload)
             }
         }
-        .animation(.default, value: viewModel.activity.animationValue)
-        .animation(.default, value: viewModel.account.animationValue)
-        .animation(.default, value: viewModel.tip.animationValue)
         .accessibilityIdentifier(SampleAppAccessibility.independentSectionsScreen)
         .navigationTitle("Independent sections")
         .task {

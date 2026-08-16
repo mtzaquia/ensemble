@@ -84,6 +84,34 @@ struct AsyncContentTests {
         }
     }
 
+    @Test("The animation overloads accept an animation or explicit nil")
+    func animationOverloadsCompose() {
+        let data = ViewData<Int>()
+        let optionalData = ViewData<Int?>(42)
+
+        for animation in [Animation.default, nil] {
+            _ = AsyncContent(data, animation: animation) { value, _ in
+                Text("\(value)")
+            }
+
+            _ = AsyncContent(data, animation: animation) { value, _ in
+                Text("\(value)")
+            } failure: { error, _ in
+                Text(error.localizedDescription)
+            }
+
+            _ = AsyncContent(unwrapping: optionalData, animation: animation) { value, _ in
+                Text("\(value)")
+            }
+
+            _ = AsyncContent(unwrapping: optionalData, animation: animation) { value, _ in
+                Text("\(value)")
+            } failure: { error, _ in
+                Text(error.localizedDescription)
+            }
+        }
+    }
+
     @available(*, deprecated)
     @Test("Deprecated presentation names forward to their replacements")
     func deprecatedPresentationNames() {

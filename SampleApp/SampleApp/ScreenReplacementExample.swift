@@ -32,12 +32,12 @@ struct ScreenReplacementExample: View {
             AsyncContent(
                 viewModel.entries,
                 loading: .placeholder(SampleEntry.placeholders),
+                animation: .default,
                 failure: .failureContent
             ) { entries, source in
                 List {
                     SampleEntryRows(entries: entries, source: source)
                 }
-                .animation(.default, value: viewModel.entries.animationValue)
                 .accessibilityIdentifier(SampleAppAccessibility.screenReplacementContent)
             } failure: { error, retry in
                 ContentUnavailableView {

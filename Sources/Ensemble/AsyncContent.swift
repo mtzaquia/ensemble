@@ -145,31 +145,50 @@ private extension AsyncContentFailureFallbackPolicy {
     }
 }
 
+private enum AsyncContentAnimationBehavior {
+    case inherited
+    case explicit(Animation?)
+}
+
 /// Renders a ``ViewData`` value according to view-local loading and failure policies.
 ///
 /// `AsyncContent` does not impose a list, section, stack, or other layout container. Its policies
 /// apply only to the content produced by this instance, whether that content is a row, section, or
 /// larger region composed by the app.
 ///
+/// Omit `animation` to inherit the surrounding transaction. Supply an animation to apply accepted
+/// presentation changes in a local animation transaction, or explicitly pass `nil` to disable
+/// animation for this presentation. Applying the transaction at this boundary lets a container
+/// such as `List` observe structural changes without bringing unrelated container updates into the
+/// same animation.
+///
 /// The loading policy applies while the data is empty as well as loading. When that policy renders
 /// no content, start an initial binding from a stable ancestor rather than a `.task` modifier
 /// attached directly to the empty `AsyncContent` value.
 public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
-    private let makeRendering: () -> AsyncContentRendering<Value>
-    private let retryAction: () -> ViewDataRetryAction?
+    private let makePresentation: () -> AsyncContentPresentation<Value>
+    private let presentationRevision: () -> ViewDataPresentationRevision
+    private let animationBehavior: AsyncContentAnimationBehavior
     private let content: (Value, AsyncContentSource) -> Content
     private let failureContent: (any Error, ViewDataRetryAction?) -> FailureContent
 
+    @ViewBuilder
     public var body: some View {
-        Group {
-            switch rendering {
-            case .hidden:
-                EmptyView()
-            case .content(let value, let source):
-                content(value, source)
-            case .failure(let error):
-                failureContent(error, retryAction())
-            }
+        switch animationBehavior {
+        case .inherited:
+            AsyncContentBody(
+                presentation: makePresentation(),
+                content: content,
+                failureContent: failureContent
+            )
+        case .explicit(let animation):
+            TransactionalAsyncContent(
+                makePresentation: makePresentation,
+                presentationRevision: presentationRevision,
+                animation: animation,
+                content: content,
+                failureContent: failureContent
+            )
         }
     }
 
@@ -177,6 +196,8 @@ public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
     ///
     /// By default, loading renders the retained successful value when one exists, and a failure
     /// replaces this content with the failure builder.
+    ///
+    /// Presentation changes inherit the surrounding SwiftUI transaction.
     ///
     /// The failure builder runs for ``AsyncContentFailurePolicy/failureContent`` and for
     /// ``AsyncContentFailurePolicy/retained`` when no retained successful value exists. It does not
@@ -197,14 +218,45 @@ public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
         @ViewBuilder failure failureContent: @escaping (any Error, ViewDataRetryAction?) -> FailureContent
     ) {
         self.init(
-            makeRendering: {
-                data.asyncContentRendering(
-                    loadingPolicy: loading,
-                    failureRendering: failure.rendering,
-                    project: { .some($0) }
-                )
-            },
-            retryAction: { data.retryAction },
+            rendering: data,
+            loading: loading,
+            failureRendering: failure.rendering,
+            animationBehavior: .inherited,
+            content: content,
+            failureContent: failureContent
+        )
+    }
+
+    /// Creates content with a dedicated failure view and explicit animation behavior.
+    ///
+    /// By default, loading renders a retained successful value when available, and failure uses the
+    /// failure builder.
+    ///
+    /// A non-`nil` animation applies accepted presentation changes in a local transaction. Passing
+    /// `nil` disables animation for those changes, overriding an inherited animation.
+    ///
+    /// - Parameters:
+    ///   - data: The presentation state to render.
+    ///   - loading: The presentation used while `data` is empty or loading.
+    ///   - animation: The animation to apply, or `nil` to disable animation for this presentation.
+    ///   - failure: The presentation used after `data` receives a failure.
+    ///   - content: A builder receiving the rendered value and whether its source is latest,
+    ///     retained, or a placeholder.
+    ///   - failureContent: A builder receiving the error and the binding's configured retry action,
+    ///     when available.
+    public init(
+        _ data: ViewData<Value>,
+        loading: AsyncContentLoadingPolicy<Value> = .retained,
+        animation: Animation?,
+        failure: AsyncContentFailurePolicy = .failureContent,
+        @ViewBuilder content: @escaping (Value, AsyncContentSource) -> Content,
+        @ViewBuilder failure failureContent: @escaping (any Error, ViewDataRetryAction?) -> FailureContent
+    ) {
+        self.init(
+            rendering: data,
+            loading: loading,
+            failureRendering: failure.rendering,
+            animationBehavior: .explicit(animation),
             content: content,
             failureContent: failureContent
         )
@@ -214,6 +266,8 @@ public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
     ///
     /// By default, loading and failure render the retained successful value when one exists, and
     /// otherwise render nothing.
+    ///
+    /// Presentation changes inherit the surrounding SwiftUI transaction.
     ///
     /// Use ``AsyncContentFailureFallbackPolicy/retained`` to render retained successful content
     /// after a failure, or ``AsyncContentFailureFallbackPolicy/hidden`` to render nothing.
@@ -233,27 +287,90 @@ public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
         @ViewBuilder content: @escaping (Value, AsyncContentSource) -> Content
     ) where FailureContent == EmptyView {
         self.init(
-            makeRendering: {
-                data.asyncContentRendering(
-                    loadingPolicy: loading,
-                    failureRendering: failure.rendering,
-                    project: { .some($0) }
-                )
-            },
-            retryAction: { data.retryAction },
+            rendering: data,
+            loading: loading,
+            failureRendering: failure.rendering,
+            animationBehavior: .inherited,
+            content: content,
+            failureContent: { _, _ in EmptyView() }
+        )
+    }
+
+    /// Creates content without a dedicated failure view and with explicit animation behavior.
+    ///
+    /// By default, loading and failure render a retained successful value when available, and
+    /// otherwise render nothing.
+    ///
+    /// A non-`nil` animation applies accepted presentation changes in a local transaction. Passing
+    /// `nil` disables animation for those changes, overriding an inherited animation.
+    ///
+    /// - Parameters:
+    ///   - data: The presentation state to render.
+    ///   - loading: The presentation used while `data` is empty or loading.
+    ///   - animation: The animation to apply, or `nil` to disable animation for this presentation.
+    ///   - failure: The presentation used after `data` receives a failure.
+    ///   - content: A builder receiving the rendered value and whether its source is latest,
+    ///     retained, or a placeholder.
+    public init(
+        _ data: ViewData<Value>,
+        loading: AsyncContentLoadingPolicy<Value> = .retained,
+        animation: Animation?,
+        failure: AsyncContentFailureFallbackPolicy = .retained,
+        @ViewBuilder content: @escaping (Value, AsyncContentSource) -> Content
+    ) where FailureContent == EmptyView {
+        self.init(
+            rendering: data,
+            loading: loading,
+            failureRendering: failure.rendering,
+            animationBehavior: .explicit(animation),
             content: content,
             failureContent: { _, _ in EmptyView() }
         )
     }
 
     private init(
+        rendering data: ViewData<Value>,
+        loading: AsyncContentLoadingPolicy<Value>,
+        failureRendering: AsyncContentFailureRendering,
+        animationBehavior: AsyncContentAnimationBehavior,
+        content: @escaping (Value, AsyncContentSource) -> Content,
+        failureContent: @escaping (any Error, ViewDataRetryAction?) -> FailureContent
+    ) {
+        self.init(
+            makeRendering: {
+                data.asyncContentRendering(
+                    loadingPolicy: loading,
+                    failureRendering: failureRendering,
+                    project: { .some($0) }
+                )
+            },
+            presentationRevision: { data.presentationRevision },
+            animationValue: { data.animationValue },
+            animationBehavior: animationBehavior,
+            retryAction: { data.retryAction },
+            content: content,
+            failureContent: failureContent
+        )
+    }
+
+    private init(
         makeRendering: @escaping () -> AsyncContentRendering<Value>,
+        presentationRevision: @escaping () -> ViewDataPresentationRevision,
+        animationValue: @escaping () -> ViewDataAnimationValue,
+        animationBehavior: AsyncContentAnimationBehavior,
         retryAction: @escaping () -> ViewDataRetryAction?,
         content: @escaping (Value, AsyncContentSource) -> Content,
         failureContent: @escaping (any Error, ViewDataRetryAction?) -> FailureContent
     ) {
-        self.makeRendering = makeRendering
-        self.retryAction = retryAction
+        self.makePresentation = {
+            AsyncContentPresentation(
+                rendering: makeRendering(),
+                animationValue: animationValue(),
+                retryAction: retryAction()
+            )
+        }
+        self.presentationRevision = presentationRevision
+        self.animationBehavior = animationBehavior
         self.content = content
         self.failureContent = failureContent
     }
@@ -261,7 +378,7 @@ public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
 
 extension AsyncContent {
     var rendering: AsyncContentRendering<Value> {
-        makeRendering()
+        makePresentation().rendering
     }
 }
 
@@ -272,6 +389,8 @@ extension AsyncContent {
     /// phase. Loading and failure policies cannot present a retained `nil` as content. While the
     /// phase is empty or loading, an explicit placeholder is still rendered because it is
     /// non-optional presentation input.
+    ///
+    /// Presentation changes inherit the surrounding SwiftUI transaction.
     ///
     /// - Parameters:
     ///   - data: The optional presentation state to render.
@@ -288,14 +407,45 @@ extension AsyncContent {
         @ViewBuilder failure failureContent: @escaping (any Error, ViewDataRetryAction?) -> FailureContent
     ) {
         self.init(
-            makeRendering: {
-                data.asyncContentRendering(
-                    loadingPolicy: loading,
-                    failureRendering: failure.rendering,
-                    project: { $0 }
-                )
-            },
-            retryAction: { data.retryAction },
+            unwrapping: data,
+            loading: loading,
+            failureRendering: failure.rendering,
+            animationBehavior: .inherited,
+            content: content,
+            failureContent: failureContent
+        )
+    }
+
+    /// Creates content by unwrapping each non-`nil` value, with a dedicated failure view and
+    /// explicit animation behavior.
+    ///
+    /// A successful `nil` omits content without changing the underlying ``ViewData`` phase.
+    ///
+    /// A non-`nil` animation applies accepted presentation changes in a local transaction. Passing
+    /// `nil` disables animation for those changes, overriding an inherited animation.
+    ///
+    /// - Parameters:
+    ///   - data: The optional presentation state to render.
+    ///   - loading: The presentation used while `data` is empty or loading.
+    ///   - animation: The animation to apply, or `nil` to disable animation for this presentation.
+    ///   - failure: The presentation used after `data` receives a failure.
+    ///   - content: A builder receiving the unwrapped value and whether its source is latest,
+    ///     retained, or a placeholder.
+    ///   - failureContent: A builder receiving the error and the binding's configured retry action,
+    ///     when available.
+    public init(
+        unwrapping data: ViewData<Value?>,
+        loading: AsyncContentLoadingPolicy<Value> = .retained,
+        animation: Animation?,
+        failure: AsyncContentFailurePolicy = .failureContent,
+        @ViewBuilder content: @escaping (Value, AsyncContentSource) -> Content,
+        @ViewBuilder failure failureContent: @escaping (any Error, ViewDataRetryAction?) -> FailureContent
+    ) {
+        self.init(
+            unwrapping: data,
+            loading: loading,
+            failureRendering: failure.rendering,
+            animationBehavior: .explicit(animation),
             content: content,
             failureContent: failureContent
         )
@@ -307,6 +457,8 @@ extension AsyncContent {
     /// phase. Loading and failure policies cannot present a retained `nil` as content. While the
     /// phase is empty or loading, an explicit placeholder is still rendered because it is
     /// non-optional presentation input.
+    ///
+    /// Presentation changes inherit the surrounding SwiftUI transaction.
     ///
     /// - Parameters:
     ///   - data: The optional presentation state to render.
@@ -321,17 +473,146 @@ extension AsyncContent {
         @ViewBuilder content: @escaping (Value, AsyncContentSource) -> Content
     ) where FailureContent == EmptyView {
         self.init(
-            makeRendering: {
-                data.asyncContentRendering(
-                    loadingPolicy: loading,
-                    failureRendering: failure.rendering,
-                    project: { $0 }
-                )
-            },
-            retryAction: { data.retryAction },
+            unwrapping: data,
+            loading: loading,
+            failureRendering: failure.rendering,
+            animationBehavior: .inherited,
             content: content,
             failureContent: { _, _ in EmptyView() }
         )
+    }
+
+    /// Creates content by unwrapping each non-`nil` value, without a dedicated failure view and
+    /// with explicit animation behavior.
+    ///
+    /// A successful `nil` omits content without changing the underlying ``ViewData`` phase.
+    ///
+    /// A non-`nil` animation applies accepted presentation changes in a local transaction. Passing
+    /// `nil` disables animation for those changes, overriding an inherited animation.
+    ///
+    /// - Parameters:
+    ///   - data: The optional presentation state to render.
+    ///   - loading: The presentation used while `data` is empty or loading.
+    ///   - animation: The animation to apply, or `nil` to disable animation for this presentation.
+    ///   - failure: The presentation used after `data` receives a failure.
+    ///   - content: A builder receiving the unwrapped value and whether its source is latest,
+    ///     retained, or a placeholder.
+    public init(
+        unwrapping data: ViewData<Value?>,
+        loading: AsyncContentLoadingPolicy<Value> = .retained,
+        animation: Animation?,
+        failure: AsyncContentFailureFallbackPolicy = .retained,
+        @ViewBuilder content: @escaping (Value, AsyncContentSource) -> Content
+    ) where FailureContent == EmptyView {
+        self.init(
+            unwrapping: data,
+            loading: loading,
+            failureRendering: failure.rendering,
+            animationBehavior: .explicit(animation),
+            content: content,
+            failureContent: { _, _ in EmptyView() }
+        )
+    }
+
+    private init(
+        unwrapping data: ViewData<Value?>,
+        loading: AsyncContentLoadingPolicy<Value>,
+        failureRendering: AsyncContentFailureRendering,
+        animationBehavior: AsyncContentAnimationBehavior,
+        content: @escaping (Value, AsyncContentSource) -> Content,
+        failureContent: @escaping (any Error, ViewDataRetryAction?) -> FailureContent
+    ) {
+        self.init(
+            makeRendering: {
+                data.asyncContentRendering(
+                    loadingPolicy: loading,
+                    failureRendering: failureRendering,
+                    project: { $0 }
+                )
+            },
+            presentationRevision: { data.presentationRevision },
+            animationValue: { data.animationValue },
+            animationBehavior: animationBehavior,
+            retryAction: { data.retryAction },
+            content: content,
+            failureContent: failureContent
+        )
+    }
+}
+
+private struct AsyncContentPresentation<Value> {
+    let rendering: AsyncContentRendering<Value>
+    let animationValue: ViewDataAnimationValue
+    let retryAction: ViewDataRetryAction?
+}
+
+private struct AsyncContentBody<Value, Content: View, FailureContent: View>: View {
+    let presentation: AsyncContentPresentation<Value>
+    let content: (Value, AsyncContentSource) -> Content
+    let failureContent: (any Error, ViewDataRetryAction?) -> FailureContent
+
+    var body: some View {
+        Group {
+            switch presentation.rendering {
+            case .hidden:
+                EmptyView()
+            case .content(let value, let source):
+                content(value, source)
+            case .failure(let error):
+                failureContent(error, presentation.retryAction)
+            }
+        }
+    }
+}
+
+// Keep the rendered presentation stable through ViewData's observation invalidation, then replace
+// it locally so containers such as List receive the structural change inside this transaction.
+private struct TransactionalAsyncContent<Value, Content: View, FailureContent: View>: View {
+    let makePresentation: () -> AsyncContentPresentation<Value>
+    let presentationRevision: () -> ViewDataPresentationRevision
+    let animation: Animation?
+    let content: (Value, AsyncContentSource) -> Content
+    let failureContent: (any Error, ViewDataRetryAction?) -> FailureContent
+
+    @State private var presentation: AsyncContentPresentation<Value>
+
+    init(
+        makePresentation: @escaping () -> AsyncContentPresentation<Value>,
+        presentationRevision: @escaping () -> ViewDataPresentationRevision,
+        animation: Animation?,
+        content: @escaping (Value, AsyncContentSource) -> Content,
+        failureContent: @escaping (any Error, ViewDataRetryAction?) -> FailureContent
+    ) {
+        self.makePresentation = makePresentation
+        self.presentationRevision = presentationRevision
+        self.animation = animation
+        self.content = content
+        self.failureContent = failureContent
+        self._presentation = State(initialValue: makePresentation())
+    }
+
+    var body: some View {
+        AsyncContentBody(
+            presentation: presentation,
+            content: content,
+            failureContent: failureContent
+        )
+        .onChange(of: presentationRevision()) {
+            let nextPresentation = makePresentation()
+
+            if let animation,
+               nextPresentation.animationValue != presentation.animationValue {
+                withAnimation(animation) {
+                    presentation = nextPresentation
+                }
+            } else {
+                var transaction = Transaction(animation: nil)
+                transaction.disablesAnimations = true
+                withTransaction(transaction) {
+                    presentation = nextPresentation
+                }
+            }
+        }
     }
 }
 
