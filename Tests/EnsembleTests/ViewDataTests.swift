@@ -57,38 +57,30 @@ struct ViewDataTests {
         #expect(data.phase.kind == .failure)
     }
 
-    @Test("Content revision advances only for changed retained successful data")
-    func contentRevisionTracksSuccessfulData() {
+    @Test("Latest-value revisions identify their ViewData instance")
+    func latestValueRevisionIdentity() {
+        let data = ViewData<Int>()
+        let initial = data.latestValueRevision
+
+        #expect(initial == data.latestValueRevision)
+        #expect(initial != ViewData<Int>().latestValueRevision)
+
+        data.set(1)
+        #expect(data.latestValueRevision == initial)
+
+        data.set(2)
+        #expect(data.latestValueRevision != initial)
+    }
+
+    @Test("Initial-value construction does not artificially advance the revision")
+    func initialValueRevision() {
         let data = ViewData(1)
-        let initial = data.contentRevision
+        let initial = data.latestValueRevision
 
         data.beginLoading()
         data.set(1)
-        #expect(data.contentRevision == initial)
 
-        data.set(2)
-        let changed = data.contentRevision
-        #expect(changed != initial)
-
-        data.beginLoading()
-        data.fail(TestError.expected)
-        data.set(2)
-        #expect(data.contentRevision == changed)
-
-        data.set(3)
-        #expect(data.contentRevision != changed)
-    }
-
-    @Test("Non-equatable successful values advance content revision")
-    func nonEquatableContentRevision() {
-        struct Value {}
-        let data = ViewData(Value())
-        let first = data.contentRevision
-
-        data.beginLoading()
-        data.set(Value())
-
-        #expect(data.contentRevision != first)
+        #expect(data.latestValueRevision == initial)
     }
 
     @Test("Internal transitions preserve the latest value while loading and failed")
@@ -143,52 +135,27 @@ struct ViewDataTests {
         #expect(data.latestValue == .unavailable)
     }
 
-    @Test("Animation values identify their source and every accepted transition")
-    @available(*, deprecated)
-    func animationValues() {
-        struct NonEquatable {}
+    @Test("Unequal replacements advance while successful, loading, or failed")
+    func unequalReplacementsAdvanceRevision() {
+        let data = ViewData(1)
+        let initial = data.latestValueRevision
 
-        let data = ViewData<NonEquatable>()
-        let empty = data.animationValue
-        #expect(empty == data.animationValue)
-        #expect(empty != ViewData<NonEquatable>().animationValue)
-
-        data.beginLoading()
-        let loading = data.animationValue
-        #expect(empty != loading)
-
-        data.set(NonEquatable())
-        let success = data.animationValue
-        #expect(loading != success)
+        data.set(2)
+        let successfulReplacement = data.latestValueRevision
+        #expect(successfulReplacement != initial)
 
         data.beginLoading()
-        let retainedLoading = data.animationValue
-        #expect(success != retainedLoading)
+        data.set(3)
+        let loadingReplacement = data.latestValueRevision
+        #expect(loadingReplacement != successfulReplacement)
 
         data.fail(TestError.expected)
-        let retainedFailure = data.animationValue
-        #expect(retainedLoading != retainedFailure)
-
-        data.set(NonEquatable())
-        let replacement = data.animationValue
-        #expect(retainedFailure != replacement)
-
-        data.reset()
-        let reset = data.animationValue
-        #expect(replacement != reset)
-
-        data.fail(TestError.expected)
-        let failure = data.animationValue
-        #expect(reset != failure)
-
-        data.fail(TestError.expected)
-        let repeatedFailure = data.animationValue
-        #expect(failure != repeatedFailure)
+        data.set(4)
+        #expect(data.latestValueRevision != loadingReplacement)
     }
 
-    @Test("An equivalent success keeps its animation value and retains the latest instance")
-    @available(*, deprecated)
-    func equivalentSuccessDoesNotAdvanceAnimation() {
+    @Test("Equal replacements retain the supplied instance without advancing")
+    func equalReplacementDoesNotAdvanceRevision() {
         final class Model: Equatable {
             let id: Int
 
@@ -204,7 +171,7 @@ struct ViewDataTests {
         let initial = Model(id: 42)
         let replacement = Model(id: 42)
         let data = ViewData(initial)
-        let animationValue = data.animationValue
+        let latestValueRevision = data.latestValueRevision
         let presentationRevision = data.presentationRevision
         let observation = ViewDataPresentationObservation(data)
         observation.start()
@@ -212,7 +179,7 @@ struct ViewDataTests {
         data.set(replacement)
 
         #expect(observation.cycles == 1)
-        #expect(data.animationValue == animationValue)
+        #expect(data.latestValueRevision == latestValueRevision)
         #expect(data.presentationRevision != presentationRevision)
         if case .available(let latest) = data.latestValue {
             #expect(latest === replacement)
@@ -221,41 +188,85 @@ struct ViewDataTests {
         }
     }
 
-    @Test("An equivalent optional nil keeps its animation value")
-    @available(*, deprecated)
-    func equivalentOptionalNilDoesNotAdvanceAnimation() {
-        let data = ViewData<Int?>(nil)
-        let animationValue = data.animationValue
-
-        data.set(nil)
-
-        #expect(data.latestValue == .available(nil))
-        #expect(data.animationValue == animationValue)
-    }
-
-    @Test("An equivalent value still advances animation when it recovers the phase")
-    @available(*, deprecated)
-    func equivalentSuccessRecoversPhase() {
+    @Test("Equal recovery from loading or failure does not advance")
+    func equalRecoveryDoesNotAdvanceRevision() {
         let data = ViewData(42)
+        let initial = data.latestValueRevision
 
         data.beginLoading()
-        let loading = data.animationValue
         data.set(42)
         #expect(data.isSuccessful)
-        #expect(data.animationValue != loading)
+        #expect(data.latestValueRevision == initial)
 
         data.fail(TestError.expected)
-        let failure = data.animationValue
         data.set(42)
         #expect(data.isSuccessful)
-        #expect(data.animationValue != failure)
+        #expect(data.latestValueRevision == initial)
     }
 
-    @Test("A successful update invalidates presentation in one observation cycle")
-    @available(*, deprecated)
+    @Test("Lifecycle, failure, retry, and finish-loading changes do not advance")
+    func lifecycleDoesNotAdvanceRevision() {
+        let data = ViewData(42)
+        let initial = data.latestValueRevision
+
+        let token = data.beginLoading()
+        #expect(data.latestValueRevision == initial)
+        data.finishLoading(token)
+        #expect(data.latestValueRevision == initial)
+        data.fail(TestError.expected)
+        #expect(data.latestValueRevision == initial)
+        data.fail(TestError.expected)
+        #expect(data.latestValueRevision == initial)
+        data.installRetryAction(ViewDataRetryAction {})
+        #expect(data.latestValueRevision == initial)
+        data.removeRetryAction()
+        #expect(data.latestValueRevision == initial)
+    }
+
+    @Test("Reset and the first value after reset do not advance")
+    func resetDoesNotAdvanceRevision() {
+        let data = ViewData(1)
+        data.set(2)
+        let changed = data.latestValueRevision
+
+        data.reset()
+        #expect(data.latestValueRevision == changed)
+        data.set(3)
+        #expect(data.latestValueRevision == changed)
+        data.set(4)
+        #expect(data.latestValueRevision != changed)
+    }
+
+    @Test("Available optional nil follows equality semantics")
+    func optionalNilRevision() {
+        let data = ViewData<Int?>(nil)
+        let initial = data.latestValueRevision
+
+        data.set(nil)
+        #expect(data.latestValueRevision == initial)
+        data.set(1)
+        let nonNil = data.latestValueRevision
+        #expect(nonNil != initial)
+        data.set(nil)
+        #expect(data.latestValueRevision != nonNil)
+    }
+
+    @Test("Non-equatable values advance only after their first success")
+    func nonEquatableRevision() {
+        struct Value {}
+        let data = ViewData<Value>()
+        let initial = data.latestValueRevision
+
+        data.set(Value())
+        #expect(data.latestValueRevision == initial)
+        data.set(Value())
+        #expect(data.latestValueRevision != initial)
+    }
+
+    @Test("A successful update invalidates presentation coherently")
     func successfulUpdateIsCoherent() {
         let data = ViewData([1, 2, 3])
-        let initialAnimationValue = data.animationValue
+        let initialLatestValueRevision = data.latestValueRevision
         let initialPresentationRevision = data.presentationRevision
         let observation = ViewDataPresentationObservation(data)
 
@@ -265,7 +276,7 @@ struct ViewDataTests {
         #expect(observation.cycles == 1)
         #expect(data.isSuccessful)
         #expect(data.latestValue == .available([3, 2, 1]))
-        #expect(data.animationValue != initialAnimationValue)
+        #expect(data.latestValueRevision != initialLatestValueRevision)
         #expect(data.presentationRevision != initialPresentationRevision)
     }
 
@@ -669,9 +680,8 @@ struct ViewDataTests {
         continuation.finish()
     }
 
-    @Test("Removing retry availability advances presentation while failure remains")
-    @available(*, deprecated)
-    func cancellingFailedBindingAdvancesPresentation() async {
+    @Test("Removing retry availability preserves the latest-value revision")
+    func cancellingFailedBindingPreservesLatestValueRevision() async {
         let (stream, continuation) = AsyncStream<Result<Int, TestError>>.makeStream()
         let data = ViewData<Int>()
         let context = ViewDataContext()
@@ -679,13 +689,13 @@ struct ViewDataTests {
         context.bind({ stream }, to: data)
         continuation.yield(.failure(.expected))
         #expect(await eventually { data.isFailed && data.retryAction != nil })
-        let retryableFailure = data.animationValue
+        let retryableFailure = data.latestValueRevision
 
         context.cancel(data)
 
         #expect(data.isFailed)
         #expect(data.retryAction == nil)
-        #expect(data.animationValue != retryableFailure)
+        #expect(data.latestValueRevision == retryableFailure)
         continuation.finish()
     }
 
@@ -757,6 +767,7 @@ private final class ViewDataPresentationObservation<Value> {
         withObservationTracking {
             _ = data.phase
             _ = data.latestValue
+            _ = data.latestValueRevision
             _ = data.presentationRevision
         } onChange: { [weak self] in
             MainActor.assumeIsolated {

@@ -23,44 +23,26 @@
 import Foundation
 import Observation
 
-/// An opaque comparison value for intentionally coordinating animations beyond one
-/// ``AsyncContent`` presentation.
+/// An opaque comparison value for successful-data changes in one ``ViewData`` instance.
 ///
-/// This value describes every accepted presentation mutation, including lifecycle, failure, reset,
-/// and retry changes. It does not identify changed successful data and should not be used as the
-/// smart update trigger for ``AsyncContent``.
+/// The value advances when an available successful value is replaced by an unequal successful
+/// value. The first success, the first success after ``ViewData/reset()``, lifecycle changes,
+/// failures, retry changes, and equal replacements do not advance it. Equal replacements still
+/// retain the newly supplied instance.
 ///
-/// Values from different `ViewData` instances compare unequal. The value changes when its instance
-/// enters another lifecycle phase, receives a changed value or error, resets, or changes retry
-/// availability.
+/// Values without `Equatable` conformance are treated as changed after their first successful
+/// value. Optional values distinguish unavailable state from an available `nil`. Values from
+/// separate `ViewData` instances always compare unequal.
 ///
-/// When `ViewData` is already successful, receiving another value that compares equal to the latest
-/// value does not change this comparison value. The newly supplied value is still retained. Values
-/// without `Equatable` conformance are treated as changed whenever they are received.
-///
-/// It does not retain or compare the presented value, so it remains equatable and sendable
-/// regardless of `Value`.
-///
-/// - Deprecated: Use ``AsyncContent``'s `animation` parameter for local presentation animation. For
-///   a larger coordinated update, combine ``ViewData/phase``'s `kind` with a domain projection such
-///   as an identifier or revision instead.
-@available(
-    *,
-    deprecated,
-    message: "Use AsyncContent's animation parameter for local presentation animation, or combine phase.kind with a domain projection for a larger update."
-)
-public struct ViewDataAnimationValue: Equatable, Sendable {
+/// The value describes domain equality, not collection identity. Use a stable-ID projection when
+/// animation should respond only to insertion, removal, or reordering.
+public struct ViewDataLatestValueRevision: Equatable, Sendable {
     fileprivate let sourceID: UUID
     fileprivate let revision: UInt
 
-    fileprivate init(sourceID: UUID, revision: UInt) {
+    fileprivate init(sourceID: UUID = UUID(), revision: UInt = 0) {
         self.sourceID = sourceID
         self.revision = revision
-    }
-
-    fileprivate init() {
-        self.sourceID = UUID()
-        self.revision = 0
     }
 
     fileprivate func advanced() -> Self {
@@ -68,30 +50,10 @@ public struct ViewDataAnimationValue: Equatable, Sendable {
     }
 }
 
-// Drives view-local presentation mirroring even when an equal value suppresses animation.
+// Identifies every accepted presentation or builder-input change for one ViewData instance.
 struct ViewDataPresentationRevision: Equatable, Sendable {
     fileprivate let sourceID: UUID
     fileprivate let revision: UInt
-}
-
-// Drives AsyncContent's smart update animation independently of lifecycle and retry changes.
-struct ViewDataContentRevision: Equatable, Sendable {
-    fileprivate let sourceID: UUID
-    fileprivate let revision: UInt
-
-    fileprivate init(sourceID: UUID, revision: UInt) {
-        self.sourceID = sourceID
-        self.revision = revision
-    }
-
-    fileprivate init() {
-        self.sourceID = UUID()
-        self.revision = 0
-    }
-
-    fileprivate func advanced() -> Self {
-        Self(sourceID: sourceID, revision: revision &+ 1)
-    }
 }
 
 /// The availability of a successful value retained by ``ViewData``.
@@ -115,10 +77,6 @@ extension ViewDataAvailability: Sendable where Value: Sendable {}
 ///
 /// `ViewData` retains its latest successful value while loading or failed. A view can present that
 /// retained value without requiring the source to emit it again.
-///
-/// When already successful, receiving a value equal to the latest successful value retains the new
-/// value without advancing ``animationValue``. Values without `Equatable` conformance always
-/// advance it when received.
 ///
 /// ``reset()`` clears presentation state without cancelling work. A later accepted update from a
 /// load or binding can supply another value.
@@ -173,10 +131,10 @@ public final class ViewData<Value> {
     private struct Presentation {
         var phase: Phase
         var latestValue: ViewDataAvailability<Value>
-        var retryAction: ViewDataRetryAction?
-        var animationValue = ViewDataAnimationValue()
-        var contentRevision = ViewDataContentRevision()
-        var revision: UInt = 0
+        var retryAction: ViewDataRetryAction? = nil
+        var loadingFailure: (any Error)? = nil
+        var latestValueRevision = ViewDataLatestValueRevision()
+        var presentationRevision: UInt = 0
     }
 
     private var presentation: Presentation
@@ -191,74 +149,38 @@ public final class ViewData<Value> {
     /// Loading and failure updates preserve this availability. ``reset()`` changes it to
     /// ``ViewDataAvailability/unavailable``. When `Value` is optional, `.available(nil)` represents
     /// a successful result whose domain value is absent.
-    ///
-    /// When `Value` is `Equatable`, use this value or a domain projection of it as a higher-level
-    /// data-animation trigger. Use ``ViewData/phase``'s `kind` when the trigger should describe a
-    /// lifecycle transition instead.
     public var latestValue: ViewDataAvailability<Value> {
         presentation.latestValue
     }
 
-    /// The most recently supplied successful value, represented as an optional property.
-    ///
-    /// Loading and failure updates preserve this value. ``reset()`` removes it. When `Value` is
-    /// optional, use ``latestValue`` to distinguish an unavailable value from an available `nil`.
-    @available(
-        *,
-        deprecated,
-        message: "Use latestValue to distinguish an unavailable value from an available optional nil."
-    )
-    public var latest: Value? {
-        switch latestValue {
-        case .unavailable:
-            nil
-        case .available(let value):
-            .some(value)
-        }
-    }
-
-    /// An opaque comparison value for intentionally coordinating a larger animation.
-    ///
-    /// The value changes after every accepted presentation change. When the phase is already
-    /// successful, receiving an equal `Value` retains that value without changing this comparison
-    /// value. A non-equatable `Value` is always treated as changed.
-    ///
-    /// - Deprecated: Use ``AsyncContent``'s `animation` parameter for local presentation animation.
-    ///   For a larger coordinated update, use `phase.kind` with a meaningful domain projection such
-    ///   as `latestValue`, stable IDs, or a server revision.
-    @available(
-        *,
-        deprecated,
-        message: "Use AsyncContent's animation parameter for local presentation animation, or combine phase.kind with a domain projection for a larger update."
-    )
-    public var animationValue: ViewDataAnimationValue {
-        presentation.animationValue
+    /// The current ``ViewDataLatestValueRevision`` for this instance.
+    public var latestValueRevision: ViewDataLatestValueRevision {
+        presentation.latestValueRevision
     }
 
     var presentationRevision: ViewDataPresentationRevision {
         ViewDataPresentationRevision(
-            sourceID: presentation.contentRevision.sourceID,
-            revision: presentation.revision
+            sourceID: presentation.latestValueRevision.sourceID,
+            revision: presentation.presentationRevision
         )
-    }
-
-    var contentRevision: ViewDataContentRevision {
-        presentation.contentRevision
     }
 
     var retryAction: ViewDataRetryAction? {
         presentation.retryAction
     }
+
+    var loadingFailure: (any Error)? {
+        presentation.loadingFailure
+    }
+
     @ObservationIgnored private var nextLoadingToken: UInt = 0
     @ObservationIgnored private var currentLoadingToken: UInt?
-    @ObservationIgnored private(set) var loadingFailure: (any Error)?
 
     /// Creates empty presentation state.
     public init() {
         self.presentation = Presentation(
             phase: .empty,
-            latestValue: .unavailable,
-            retryAction: nil
+            latestValue: .unavailable
         )
     }
 
@@ -271,10 +193,8 @@ public final class ViewData<Value> {
     public init(_ value: Value) {
         self.presentation = Presentation(
             phase: .success,
-            latestValue: .available(value),
-            retryAction: nil
+            latestValue: .available(value)
         )
-        self.presentation.contentRevision = self.presentation.contentRevision.advanced()
     }
 
     // Work around swiftlang/swift#90385.
@@ -283,21 +203,20 @@ public final class ViewData<Value> {
 
     func set(_ value: Value) {
         currentLoadingToken = nil
-        loadingFailure = nil
         updatePresentation(
-            advancingAnimation: shouldAdvanceAnimation(for: value),
-            advancingContent: shouldAdvanceContentRevision(for: value)
+            advancingLatestValueRevision: shouldAdvanceLatestValueRevision(for: value)
         ) {
             $0.latestValue = .available(value)
             $0.phase = .success
+            $0.loadingFailure = nil
         }
     }
 
     func fail(_ error: any Error) {
         currentLoadingToken = nil
-        loadingFailure = nil
         updatePresentation {
             $0.phase = .failure(error)
+            $0.loadingFailure = nil
         }
     }
 
@@ -305,14 +224,15 @@ public final class ViewData<Value> {
     func beginLoading() -> UInt {
         nextLoadingToken &+= 1
         currentLoadingToken = nextLoadingToken
-        if case .failure(let error) = phase {
-            loadingFailure = error
-        } else if case .loading = phase {
-            // Keep a failure retained by an overlapping or repeated reload.
-        } else {
-            loadingFailure = nil
-        }
         updatePresentation {
+            switch $0.phase {
+            case .failure(let error):
+                $0.loadingFailure = error
+            case .loading:
+                break // Preserve a failure retained by an overlapping reload.
+            case .empty, .success:
+                $0.loadingFailure = nil
+            }
             $0.phase = .loading
         }
         return nextLoadingToken
@@ -325,10 +245,10 @@ public final class ViewData<Value> {
     /// stop as well, and cancel the task awaiting ``ViewDataContext/load(_:to:)`` to stop a load.
     public func reset() {
         currentLoadingToken = nil
-        loadingFailure = nil
         updatePresentation {
             $0.latestValue = .unavailable
             $0.phase = .empty
+            $0.loadingFailure = nil
         }
     }
 }
@@ -350,32 +270,23 @@ extension ViewData {
     func finishLoading(_ token: UInt) {
         guard currentLoadingToken == token else { return }
         currentLoadingToken = nil
-        if let loadingFailure {
-            self.loadingFailure = nil
-            updatePresentation {
-                $0.phase = .failure(loadingFailure)
+        updatePresentation {
+            $0.phase = if let loadingFailure = $0.loadingFailure {
+                .failure(loadingFailure)
+            } else {
+                switch $0.latestValue {
+                case .unavailable:
+                    .empty
+                case .available:
+                    .success
+                }
             }
-        } else {
-            let phase: Phase = switch latestValue {
-            case .unavailable:
-                .empty
-            case .available:
-                .success
-            }
-            updatePresentation {
-                $0.phase = phase
-            }
+            $0.loadingFailure = nil
         }
     }
 
-    private func shouldAdvanceAnimation(for value: Value) -> Bool {
-        guard case .success = presentation.phase else { return true }
-        guard case .available(let latestValue) = presentation.latestValue else { return true }
-        return valuesAreEqual(latestValue, value) == false
-    }
-
-    private func shouldAdvanceContentRevision(for value: Value) -> Bool {
-        guard case .available(let latestValue) = presentation.latestValue else { return true }
+    private func shouldAdvanceLatestValueRevision(for value: Value) -> Bool {
+        guard case .available(let latestValue) = presentation.latestValue else { return false }
         return valuesAreEqual(latestValue, value) == false
     }
 
@@ -393,19 +304,15 @@ extension ViewData {
     }
 
     private func updatePresentation(
-        advancingAnimation: Bool = true,
-        advancingContent: Bool = false,
+        advancingLatestValueRevision: Bool = false,
         _ update: (inout Presentation) -> Void
     ) {
         var nextPresentation = presentation
         update(&nextPresentation)
-        if advancingAnimation {
-            nextPresentation.animationValue = nextPresentation.animationValue.advanced()
+        if advancingLatestValueRevision {
+            nextPresentation.latestValueRevision = nextPresentation.latestValueRevision.advanced()
         }
-        if advancingContent {
-            nextPresentation.contentRevision = nextPresentation.contentRevision.advanced()
-        }
-        nextPresentation.revision &+= 1
+        nextPresentation.presentationRevision &+= 1
         presentation = nextPresentation
     }
 }

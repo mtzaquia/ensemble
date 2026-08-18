@@ -32,7 +32,7 @@ struct IndependentSectionsExample: View {
             AsyncContent(
                 viewModel.activity,
                 loading: .placeholder(SampleEntry.placeholders),
-                animation: .default,
+                transitionAnimation: .default,
                 failure: .failureContent
             ) { entries, source in
                 Section {
@@ -54,7 +54,7 @@ struct IndependentSectionsExample: View {
             AsyncContent(
                 viewModel.account,
                 loading: .retained,
-                animation: .default,
+                transitionAnimation: .default,
                 failure: .retained
             ) { entries, source in
                 Section {
@@ -76,7 +76,7 @@ struct IndependentSectionsExample: View {
             AsyncContent(
                 viewModel.tip,
                 loading: .hidden,
-                animation: .default,
+                transitionAnimation: .default,
                 failure: .failureContent
             ) { tip, source in
                 Section {

@@ -84,27 +84,30 @@ struct AsyncContentTests {
         }
     }
 
-    @Test("The animation parameter accepts its default and explicit nil")
-    func animationParameterComposes() {
+    @Test("The transition animation parameter composes across every initializer family")
+    func transitionAnimationParameterComposes() {
         let data = ViewData<Int>()
         let optionalData = ViewData<Int?>(42)
 
         for animation in [Animation.default, nil] {
-            _ = AsyncContent(data, animation: animation) { value, _ in
+            _ = AsyncContent(data, transitionAnimation: animation) { value, _ in
                 Text("\(value)")
             }
 
-            _ = AsyncContent(data, animation: animation) { value, _ in
+            _ = AsyncContent(data, transitionAnimation: animation) { value, _ in
                 Text("\(value)")
             } failure: { error, _ in
                 Text(error.localizedDescription)
             }
 
-            _ = AsyncContent(unwrapping: optionalData, animation: animation) { value, _ in
+            _ = AsyncContent(unwrapping: optionalData, transitionAnimation: animation) { value, _ in
                 Text("\(value)")
             }
 
-            _ = AsyncContent(unwrapping: optionalData, animation: animation) { value, _ in
+            _ = AsyncContent(
+                unwrapping: optionalData,
+                transitionAnimation: animation
+            ) { value, _ in
                 Text("\(value)")
             } failure: { error, _ in
                 Text(error.localizedDescription)
@@ -112,77 +115,98 @@ struct AsyncContentTests {
         }
     }
 
-    @Test("Smart animation follows the post-mount rendering matrix")
-    func smartAnimationClassifier() {
-        let latest = AsyncContentRenderingKind.content(.latest)
-        let retained = AsyncContentRenderingKind.content(.retained)
-        let placeholder = AsyncContentRenderingKind.content(.placeholder)
-
-        let cases: [(AsyncContentRenderingKind, AsyncContentRenderingKind, Bool, Bool)] = [
-            (.hidden, .hidden, true, false),
-            (.hidden, latest, true, true),
-            (.hidden, latest, false, true),
-            (placeholder, latest, true, false),
-            (placeholder, latest, false, false),
-            (placeholder, retained, true, false),
-            (placeholder, retained, false, false),
-            (latest, placeholder, true, true),
-            (retained, placeholder, true, true),
-            (placeholder, .hidden, true, true),
-            (placeholder, .failure, true, true),
-            (latest, latest, true, true),
-            (latest, retained, false, false),
-            (retained, latest, false, false),
-            (retained, latest, true, true),
-            (latest, .failure, true, true),
-            (.failure, latest, true, true),
-            (.failure, .failure, true, false),
-            (latest, .hidden, true, true),
-            (latest, latest, false, false),
-            (retained, retained, true, true),
-            (placeholder, placeholder, true, false),
-            (.failure, .hidden, true, true),
-            (.hidden, .failure, true, true),
+    @Test("Transition animation follows the post-mount rendering-category matrix")
+    func transitionAnimationClassifier() {
+        let cases: [(AsyncContentRenderingKind, AsyncContentRenderingKind, Bool)] = [
+            (.hidden, .hidden, false),
+            (.hidden, .content, true),
+            (.hidden, .failure, true),
+            (.content, .hidden, true),
+            (.content, .content, false),
+            (.content, .failure, true),
+            (.failure, .hidden, true),
+            (.failure, .content, true),
+            (.failure, .failure, false),
         ]
 
-        for (previous, next, contentChanged, expected) in cases {
+        for (previous, next, expected) in cases {
             #expect(
-                asyncContentShouldAnimate(
+                (asyncContentTransitionAnimation(
                     from: previous,
                     to: next,
-                    contentRevisionChanged: contentChanged
-                ) == expected
+                    transitionAnimation: .default
+                ) != nil) == expected
             )
         }
     }
 
-    @available(*, deprecated)
-    @Test("Deprecated presentation names forward to their replacements")
-    func deprecatedPresentationNames() {
-        #expect(AsyncContentSource.live == .latest)
-        #expect(AsyncContentSource.cached == .retained)
-        let matchesLive = switch AsyncContentSource.latest {
-        case .live: true
-        default: false
+    @Test("Nil configuration originates no transition animation")
+    func nilTransitionAnimation() {
+        #expect(
+            asyncContentTransitionAnimation(
+                from: .hidden,
+                to: .content,
+                transitionAnimation: nil
+            ) == nil
+        )
+    }
+
+    @Test("Latest, retained, and placeholder presentations are all content")
+    func successfulPresentationCategories() {
+        let latest = AsyncContentRendering<Int>.content(1, .latest)
+        let retained = AsyncContentRendering<Int>.content(1, .retained)
+        let placeholder = AsyncContentRendering<Int>.content(1, .placeholder)
+
+        #expect(latest.kind == .content)
+        #expect(retained.kind == .content)
+        #expect(placeholder.kind == .content)
+    }
+
+    @Test("Failure policies map to the category actually rendered")
+    func failurePolicyCategories() {
+        let data = ViewData(42)
+        data.fail(TestError.expected)
+
+        let retained = AsyncContent(data, failure: .retained) { value, _ in
+            Text("\(value)")
+        } failure: { error, _ in
+            Text(error.localizedDescription)
         }
-        #expect(matchesLive)
-        let matchesCached = switch AsyncContentSource.retained {
-        case .cached: true
-        default: false
+        let replacement = AsyncContent(data, failure: .failureContent) { value, _ in
+            Text("\(value)")
+        } failure: { error, _ in
+            Text(error.localizedDescription)
         }
-        #expect(matchesCached)
+        let hidden = AsyncContent(data, failure: .hidden) { value, _ in
+            Text("\(value)")
+        }
+        let emptyData = ViewData<Int>()
+        emptyData.fail(TestError.expected)
+        let retainedFallback = AsyncContent(emptyData, failure: .retained) { value, _ in
+            Text("\(value)")
+        }
 
-        let loading: AsyncContentLoadingPolicy<Int> = .cached
-        #expect(ifCaseRetained(loading))
+        #expect(retained.rendering.kind == .content)
+        #expect(replacement.rendering.kind == .failure)
+        #expect(hidden.rendering.kind == .hidden)
+        #expect(retainedFallback.rendering.kind == .hidden)
+    }
 
-        let retainedFailure: AsyncContentFailurePolicy = .cached
-        #expect(ifCaseRetained(retainedFailure))
+    @Test("Retry changes update builder input without changing the rendering category")
+    func retryChangesUpdateBuilderInput() {
+        let data = ViewData<Int>()
+        data.fail(TestError.expected)
+        let content = AsyncContent(data) { value, _ in
+            Text("\(value)")
+        } failure: { error, retry in
+            Button(error.localizedDescription) { retry?() }
+        }
 
-        let replacementFailure: AsyncContentFailurePolicy = .replace
-        #expect(ifCaseFailureContent(replacementFailure))
+        #expect(content.rendering.failure?.retryAction == nil)
 
-        let fallback: AsyncContentFailureFallbackPolicy = .cached
-        #expect(ifCaseRetained(fallback))
+        data.installRetryAction(ViewDataRetryAction {})
+
+        #expect(content.rendering.failure?.retryAction != nil)
     }
 
     @Test("Unwrapping renders a non-optional latest value")
@@ -298,24 +322,19 @@ struct AsyncContentTests {
 
         data.fail(TestError.expected)
 
-        let error = try #require(content.rendering.failure as? TestError)
+        let error = try #require(content.rendering.failure?.error as? TestError)
         #expect(error == .expected)
     }
 
-    @Test("A placeholder is used before the first successful value")
-    func placeholderWithoutRetainedValue() {
-        let presentation = AsyncContentLoadingPolicy.placeholder(10).presentation(retained: nil)
+    @Test("A placeholder policy yields to retained content")
+    func placeholderPolicy() {
+        let placeholder = AsyncContentLoadingPolicy.placeholder(10).presentation(retained: nil)
+        let retained = AsyncContentLoadingPolicy.placeholder(10).presentation(retained: 20)
 
-        #expect(presentation?.value == 10)
-        #expect(presentation?.source == .placeholder)
-    }
-
-    @Test("A placeholder policy prefers the retained successful value")
-    func placeholderWithRetainedValue() {
-        let presentation = AsyncContentLoadingPolicy.placeholder(10).presentation(retained: 20)
-
-        #expect(presentation?.value == 20)
-        #expect(presentation?.source == .retained)
+        #expect(placeholder?.value == 10)
+        #expect(placeholder?.source == .placeholder)
+        #expect(retained?.value == 20)
+        #expect(retained?.source == .retained)
     }
 
     @Test("Hidden loading content retains a presented failure during retry")
@@ -334,7 +353,7 @@ struct AsyncContentTests {
         data.fail(TestError.expected)
         data.beginLoading()
 
-        let retryError = try #require(content.rendering.failure as? TestError)
+        let retryError = try #require(content.rendering.failure?.error as? TestError)
         #expect(retryError == .expected)
 
         data.set(42)
@@ -347,7 +366,7 @@ struct AsyncContentTests {
         data.beginLoading()
         data.fail(TestError.subsequent)
 
-        let subsequentError = try #require(content.rendering.failure as? TestError)
+        let subsequentError = try #require(content.rendering.failure?.error as? TestError)
         #expect(subsequentError == .subsequent)
     }
 
@@ -373,22 +392,6 @@ struct AsyncContentTests {
     }
 }
 
-private func ifCaseRetained<Value>(_ policy: AsyncContentLoadingPolicy<Value>) -> Bool {
-    if case .retained = policy { true } else { false }
-}
-
-private func ifCaseRetained(_ policy: AsyncContentFailurePolicy) -> Bool {
-    if case .retained = policy { true } else { false }
-}
-
-private func ifCaseFailureContent(_ policy: AsyncContentFailurePolicy) -> Bool {
-    if case .failureContent = policy { true } else { false }
-}
-
-private func ifCaseRetained(_ policy: AsyncContentFailureFallbackPolicy) -> Bool {
-    if case .retained = policy { true } else { false }
-}
-
 private extension AsyncContentRendering {
     var isHidden: Bool {
         if case .hidden = self {
@@ -406,9 +409,9 @@ private extension AsyncContentRendering {
         }
     }
 
-    var failure: (any Error)? {
-        if case .failure(let error) = self {
-            error
+    var failure: (error: any Error, retryAction: ViewDataRetryAction?)? {
+        if case .failure(let error, let retryAction) = self {
+            (error, retryAction)
         } else {
             nil
         }

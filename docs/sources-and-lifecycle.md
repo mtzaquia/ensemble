@@ -110,7 +110,7 @@ The overload translates the source vocabulary and chooses its reload contract. T
 requires a refresh action because the repository stream is hot; an adapter for a cold source can
 use `.resubscribe` instead.
 
-Feature code now uses the source-specific overload directly:
+Feature code calls the source-specific overload directly:
 
 ```swift
 context.bind(

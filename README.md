@@ -20,7 +20,7 @@ a failure, or nothing.
 - Keep useful data visible while a refresh is loading or fails.
 - Recover after a failure without terminating the stream.
 - Reload cold sources with `.resubscribe` or signal a hot source with `.refresh(action)`.
-- Give each screen or section its own loading, failure, and smart update-animation behavior.
+- Animate presentation presence separately from caller-owned successful-content changes.
 
 ```swift
 AsyncContent(viewModel.entries) { entries, _ in
@@ -118,7 +118,7 @@ struct EntriesView: View {
 
 With this `AsyncContent` initializer, loading and failure render nothing until a successful value
 exists, then retain that value. The [presentation policies guide](docs/presentation-policies.md)
-shows how to add placeholder or failure UI.
+shows how to add placeholder or failure UI and where presentation and content animation belong.
 
 The surrounding `ZStack` remains mounted while `AsyncContent` is empty, making it a reliable place
 to start the binding. Releasing the context cancels its subscription.
@@ -139,10 +139,8 @@ That is the core idea: bind observable presentation data once, then render its l
 
 Open [`SampleApp/SampleApp.xcodeproj`](SampleApp/SampleApp.xcodeproj) to explore dedicated failure
 content, seeded content retained through refresh, independently loading sections, and the
-placeholder-first stable-ID animation scenario. The `animated-reordering` screen also demonstrates
-post-mount hide/restore insertion, the explicit `animation: nil` opt-out, and sibling isolation.
-See [`SampleApp/README.md`](SampleApp/README.md) for the acceptance flow. UI tests verify final
-states; inspect that screen in Simulator to see motion.
+placeholder-first stable-ID animation scenario. See [`SampleApp/README.md`](SampleApp/README.md)
+for the scenario guide and manual animation checks.
 
 ## License
 

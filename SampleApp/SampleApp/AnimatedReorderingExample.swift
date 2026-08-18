@@ -27,15 +27,16 @@ import SwiftUI
 struct AnimatedReorderingExample: View {
     @State private var viewModel = AnimatedReorderingViewModel()
     @State private var animatesRows = true
+    @State private var animatesPresentation = true
     @State private var hidesRows = false
 
     var body: some View {
         List {
             Section("Initial loading") {
-                Text("The first frame uses a local placeholder; mounting it never flies in.")
-                    .foregroundStyle(.secondary)
-                Text("The delayed real result replaces the placeholder without a fly-in; smart motion is reserved for real-data and structural changes.")
-                    .font(.caption)
+                Text(
+                    "The placeholder mounts without animation. Its replacement is also content, "
+                        + "so Ensemble adds no transition."
+                )
                     .foregroundStyle(.secondary)
             }
 
@@ -49,10 +50,15 @@ struct AnimatedReorderingExample: View {
             }
 
             Section("Action") {
-                Toggle("Animate changed rows", isOn: $animatesRows)
+                Toggle("Animate consumer row changes", isOn: $animatesRows)
                     .accessibilityIdentifier(SampleAppAccessibility.animatedReorderingAnimation)
 
-                Button("Update sibling and reverse rows") {
+                Toggle("Animate presentation changes", isOn: $animatesPresentation)
+                    .accessibilityIdentifier(
+                        SampleAppAccessibility.animatedReorderingTransitionAnimation
+                    )
+
+                Button("Update sibling and rows") {
                     viewModel.updateBoth()
                 }
                 .accessibilityIdentifier(SampleAppAccessibility.animatedReorderingReverse)
@@ -73,18 +79,20 @@ struct AnimatedReorderingExample: View {
             }
 
             Section("What this shows") {
-                Label("Rows keep the same identities", systemImage: "number")
-                Label("Hide and restore animate this AsyncContent section's insertion and removal", systemImage: "rectangle.dashed.and.paperclip")
+                Label(
+                    "AsyncContent owns presentation replacement",
+                    systemImage: "rectangle.dashed.and.paperclip"
+                )
                 Label(
                     animatesRows
-                        ? "The default AsyncContent animation moves only changed rows"
-                        : "An explicit nil disables animation for these rows",
+                        ? "Stable IDs and row values own content motion"
+                        : "Consumer row animation is disabled",
                     systemImage: animatesRows ? "sparkles" : "sparkles.slash"
                 )
-                Label("The sibling starts from its new position", systemImage: "rectangle.topthird.inset.filled")
-                Text("UI tests verify final order and source changes; inspect this screen in Simulator to see motion.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Label(
+                    "The sibling remains outside both animation scopes",
+                    systemImage: "rectangle.topthird.inset.filled"
+                )
             }
         }
         .accessibilityIdentifier(SampleAppAccessibility.animatedReorderingScreen)
@@ -99,7 +107,7 @@ struct AnimatedReorderingExample: View {
         AsyncContent(
             viewModel.entries,
             loading: hidesRows ? .hidden : .placeholder(SampleEntry.placeholders),
-            animation: animatesRows ? .default : nil
+            transitionAnimation: animatesPresentation ? .default : nil
         ) { entries, source in
             rowsSection(entries: entries, source: source)
         }
@@ -115,27 +123,28 @@ struct AnimatedReorderingExample: View {
             }
             .accessibilityIdentifier(SampleAppAccessibility.animatedReorderingSource)
 
-            SampleEntryRows(entries: entries, source: source)
+            ForEach(entries) { entry in
+                SampleEntryRow(entry: entry)
+                    .animation(animatesRows ? .snappy : nil, value: entry.detail)
+            }
+            .animation(animatesRows ? .snappy : nil, value: entries.map(\.id))
+            .redacted(reason: source == .placeholder ? .placeholder : [])
         } header: {
             Text("Stable-ID rows")
         } footer: {
-            Text("After mount, smart animation targets structural changes and changed latest or retained data.")
+            Text("Stable IDs own structure; each row owns its value changes.")
         }
     }
 }
 
 @Observable
 private final class AnimatedReorderingViewModel {
-    let entries: ViewData<[SampleEntry]>
+    let entries = ViewData<[SampleEntry]>()
     private(set) var siblingRevision = 0
 
     @ObservationIgnored private let context = ViewDataContext()
-    @ObservationIgnored private var isReversed = false
+    @ObservationIgnored private var showsUpdatedEntries = false
     @ObservationIgnored private var didStart = false
-
-    init() {
-        entries = ViewData()
-    }
 
     func start() async {
         guard didStart == false else { return }
@@ -152,13 +161,9 @@ private final class AnimatedReorderingViewModel {
 
     func updateBoth() {
         siblingRevision += 1
-        isReversed.toggle()
-        let nextEntries = isReversed ? Array(Self.originalEntries.reversed()) : Self.originalEntries
-
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            await self.context.load({ nextEntries }, to: self.entries)
-        }
+        showsUpdatedEntries.toggle()
+        let nextEntries = showsUpdatedEntries ? Self.updatedEntries : Self.originalEntries
+        load(nextEntries)
     }
 
     func hideRows() {
@@ -166,9 +171,13 @@ private final class AnimatedReorderingViewModel {
     }
 
     func restoreRows() {
+        load(Self.originalEntries)
+    }
+
+    private func load(_ value: [SampleEntry]) {
         Task { @MainActor [weak self] in
             guard let self else { return }
-            await self.context.load({ Self.originalEntries }, to: self.entries)
+            await self.context.load({ value }, to: self.entries)
         }
     }
 
@@ -176,5 +185,11 @@ private final class AnimatedReorderingViewModel {
         SampleEntry(id: 501, title: "First", detail: "A stable row that moves to the bottom"),
         SampleEntry(id: 502, title: "Second", detail: "Its identity is preserved during the update"),
         SampleEntry(id: 503, title: "Third", detail: "A stable row that moves to the top"),
+    ]
+
+    private static let updatedEntries = [
+        SampleEntry(id: 503, title: "Third", detail: "This retained row also changed its detail"),
+        SampleEntry(id: 504, title: "Inserted", detail: "A new stable identity"),
+        SampleEntry(id: 501, title: "First", detail: "This retained row moved to the bottom"),
     ]
 }

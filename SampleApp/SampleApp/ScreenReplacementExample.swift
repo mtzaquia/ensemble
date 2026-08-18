@@ -32,7 +32,7 @@ struct ScreenReplacementExample: View {
             AsyncContent(
                 viewModel.entries,
                 loading: .placeholder(SampleEntry.placeholders),
-                animation: .default,
+                transitionAnimation: .default,
                 failure: .failureContent
             ) { entries, source in
                 List {

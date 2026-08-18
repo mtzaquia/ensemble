@@ -33,7 +33,7 @@ struct LoadingLabExample: View {
                 AsyncContent(
                     unwrapping: viewModel.entries,
                     loading: .placeholder(SampleEntry.placeholders),
-                    animation: .default,
+                    transitionAnimation: .default,
                     failure: .retained
                 ) { entries, source in
                     SampleEntryRows(entries: entries, source: source)

@@ -21,16 +21,20 @@ for manual inspection of transitions.
 The `animated-reordering` scenario is the direct animation acceptance path:
 
 1. A placeholder is mounted without a first-draw fly-in.
-2. A delayed local result replaces it after mount without animating the placeholder-to-real-data transition.
-3. The default `AsyncContent` animation targets stable-ID row reordering while a sibling counter
-   changes independently.
-4. Hide and restore the section to see post-mount content removal and insertion.
-5. Toggle animation off to exercise the explicit `animation: nil` branch.
+2. A delayed local result replaces it without an Ensemble transition because placeholder and latest
+   values are both successful content.
+3. Consumer-owned animation at the `ForEach` boundary handles stable-ID insertion, removal, and
+   reordering while row detail changes use a separate row-level value trigger.
+4. Hide and restore the section to see post-mount presentation removal and insertion controlled by
+   `transitionAnimation`.
+5. Toggle row animation and presentation animation independently, including the
+   `transitionAnimation: nil` branch.
 
-The source badge, stable row identifiers, and action text make each state legible. UI tests verify
-placeholder/latest visibility, final row order, sibling isolation, hidden/restore behavior, and the
-explicit nil branch. They do not prove motion; inspect the scenario directly in Simulator for that
-part of the contract.
+The source badge, stable row identifiers, inserted and removed rows, changed row detail, and action
+text make each ownership boundary legible. The same identity projection works when `ForEach` is
+hosted by a list, stack, or another container. UI tests verify placeholder/latest visibility, final
+row order, sibling isolation, hidden/restore behavior, and both animation toggles. They do not prove
+motion; inspect the scenario directly in Simulator for that part of the contract.
 
 ## Validation
 

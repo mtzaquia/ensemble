@@ -129,7 +129,7 @@ nonisolated final class SampleAppUITests: XCTestCase {
     }
 
     @MainActor
-    func testSmartPresentationUpdatesAlongsideItsSibling() {
+    func testPresentationAndConsumerAnimationsUpdateAlongsideSibling() {
         launch(.animatedReordering)
 
         XCTAssertTrue(element(A11y.animatedReorderingScreen).waitForExistence(timeout: 3))
@@ -161,6 +161,16 @@ nonisolated final class SampleAppUITests: XCTestCase {
         XCTAssertTrue(waitForNonExistence(first))
 
         let restore = element(A11y.animatedReorderingRestore)
+        scrollUntilHittable(restore, direction: .up)
+        restore.tap()
+        XCTAssertTrue(first.waitForExistence(timeout: 3))
+
+        let transitionAnimation = app.switches[A11y.animatedReorderingTransitionAnimation]
+        scrollUntilHittable(transitionAnimation, direction: .up)
+        transitionAnimation.tap()
+        scrollUntilHittable(hide, direction: .up)
+        hide.tap()
+        XCTAssertTrue(waitForNonExistence(first))
         scrollUntilHittable(restore, direction: .up)
         restore.tap()
         XCTAssertTrue(first.waitForExistence(timeout: 3))
@@ -259,6 +269,8 @@ private enum A11y {
     static let animatedReorderingReverse = "sample.animated-reordering.reverse"
     static let animatedReorderingSibling = "sample.animated-reordering.sibling"
     static let animatedReorderingAnimation = "sample.animated-reordering.animation"
+    static let animatedReorderingTransitionAnimation =
+        "sample.animated-reordering.transition-animation"
     static let animatedReorderingHide = "sample.animated-reordering.hide"
     static let animatedReorderingRestore = "sample.animated-reordering.restore"
 

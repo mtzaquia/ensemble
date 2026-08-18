@@ -55,7 +55,7 @@ enum SampleScenario: String, CaseIterable, Identifiable {
         case .cachedRefresh:
             "Seeded data remains visible through loading and failure."
         case .animatedReordering:
-            "Placeholder-first loading, smart updates, stable-ID reordering, and an explicit nil opt-out."
+            "Presentation transitions and consumer-owned stable-ID row animation."
         case .independentSections:
             "Several streams drive separate parts of one list."
         }
@@ -135,6 +135,8 @@ enum SampleAppAccessibility {
     static let animatedReorderingReverse = "sample.animated-reordering.reverse"
     static let animatedReorderingSibling = "sample.animated-reordering.sibling"
     static let animatedReorderingAnimation = "sample.animated-reordering.animation"
+    static let animatedReorderingTransitionAnimation =
+        "sample.animated-reordering.transition-animation"
     static let animatedReorderingSource = "sample.animated-reordering.source"
     static let animatedReorderingHide = "sample.animated-reordering.hide"
     static let animatedReorderingRestore = "sample.animated-reordering.restore"

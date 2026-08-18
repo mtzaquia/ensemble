@@ -114,15 +114,6 @@ struct SampleEntryRows: View {
     var body: some View {
         ForEach(entries) { entry in
             SampleEntryRow(entry: entry)
-                .transition(
-                    .asymmetric(
-                        insertion: .move(edge: .trailing)
-                            .combined(with: .opacity)
-                            .combined(with: .scale(scale: 0.96)),
-                        removal: .move(edge: .leading)
-                            .combined(with: .opacity)
-                    )
-                )
         }
         .redacted(reason: source == .placeholder ? .placeholder : [])
     }
