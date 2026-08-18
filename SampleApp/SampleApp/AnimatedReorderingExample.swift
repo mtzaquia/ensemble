@@ -34,7 +34,7 @@ struct AnimatedReorderingExample: View {
             Section("Initial loading") {
                 Text("The first frame uses a local placeholder; mounting it never flies in.")
                     .foregroundStyle(.secondary)
-                Text("The delayed real result is a post-mount replacement, so the smart policy animates it.")
+                Text("The delayed real result replaces the placeholder without a fly-in; smart motion is reserved for real-data and structural changes.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

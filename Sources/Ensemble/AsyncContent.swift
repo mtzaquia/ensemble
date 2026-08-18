@@ -170,8 +170,10 @@ extension AsyncContentRendering {
 ///
 /// The initial rendering is seeded directly into `State`, so this classifier is used only for
 /// post-mount updates. Genuine structural changes, including insertion or removal of a content
-/// region, animate. A latest/retained source change with an unchanged successful value is the one
-/// lifecycle transition suppressed as source-only.
+/// region, animate. A placeholder becoming latest or retained content is intentionally suppressed
+/// as a source transition; a latest or retained value becoming a placeholder remains a genuine
+/// replacement and can animate. Latest/retained source changes with an unchanged successful value
+/// are also suppressed.
 func asyncContentShouldAnimate(
     from previous: AsyncContentRenderingKind,
     to next: AsyncContentRenderingKind,
@@ -184,7 +186,7 @@ func asyncContentShouldAnimate(
         switch (previousSource, nextSource) {
         case (.latest, .latest), (.latest, .retained), (.retained, .latest), (.retained, .retained):
             contentRevisionChanged
-        case (.placeholder, .placeholder):
+        case (.placeholder, .latest), (.placeholder, .retained), (.placeholder, .placeholder):
             false
         default:
             true
@@ -201,11 +203,12 @@ func asyncContentShouldAnimate(
 /// larger region composed by the app.
 ///
 /// By default, ``AsyncContent`` seeds its initial rendering without animation, then animates genuine
-/// post-mount structural changes and changed successful data. Equal latest/retained values, source-
-/// only lifecycle changes, and retry-only changes are not animated. Supply a custom animation to
-/// change the curve, or pass `nil` to disable local animation entirely. Applying the transaction at
-/// this boundary lets a container such as `List` observe structural changes without bringing
-/// unrelated container updates into the same animation.
+/// post-mount structural changes and changed successful data. A placeholder becoming latest or
+/// retained content is not animated; equal latest/retained values, source-only lifecycle changes,
+/// and retry-only changes are also not animated. Supply a custom animation to change the curve, or
+/// pass `nil` to disable local animation entirely. Applying the transaction at this boundary lets
+/// a container such as `List` observe structural changes without bringing unrelated container
+/// updates into the same animation.
 ///
 /// The loading policy applies while the data is empty as well as loading. When that policy renders
 /// no content, start an initial binding from a stable ancestor rather than a `.task` modifier

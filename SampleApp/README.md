@@ -21,7 +21,7 @@ for manual inspection of transitions.
 The `animated-reordering` scenario is the direct animation acceptance path:
 
 1. A placeholder is mounted without a first-draw fly-in.
-2. A delayed local result replaces it after mount.
+2. A delayed local result replaces it after mount without animating the placeholder-to-real-data transition.
 3. The default `AsyncContent` animation targets stable-ID row reordering while a sibling counter
    changes independently.
 4. Hide and restore the section to see post-mount content removal and insertion.

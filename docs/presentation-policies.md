@@ -74,12 +74,15 @@ Every `AsyncContent` initializer has an `animation: Animation?` parameter whose 
 `.default`. The default is a smart local animation. The presentation visible on the initial mount is
 seeded without animation, so a screen does not fly in on its first draw. After mount, genuine
 structural changes are animated at this `AsyncContent` boundary, including hidden/content insertion
-or removal, placeholder/content replacement, failure/content replacement, and changed successful
-values.
+or removal, failure/content replacement, and changed successful values. A placeholder becoming
+latest or retained content is intentionally not animated; it is a source transition from
+presentation input to real data. A latest or retained value becoming a placeholder remains a
+genuine replacement and may animate.
 
 The smart policy does not animate the following transitions:
 
 - an equal successful value, including when it is retained during loading or failure;
+- a placeholder becoming latest or retained content;
 - a latest/retained source-only change when the successful data is unchanged;
 - retry-action availability and lifecycle changes that leave the rendered content equivalent;
 - a placeholder-to-placeholder or failure-to-failure update.
