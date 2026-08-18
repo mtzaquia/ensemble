@@ -126,7 +126,7 @@ placeholder-to-latest, latest-to-retained, and latest-A-to-latest-B therefore re
 Ensemble-originated animation. A reset that hides content and a later value that restores it are
 category changes and can animate.
 
-Pass `nil` when Ensemble should add no presentation animation:
+Pass `nil` to suppress animation when the rendered category changes:
 
 ```swift
 AsyncContent(
@@ -137,39 +137,47 @@ AsyncContent(
 }
 ```
 
-This uses a plain state update; it does not disable animation supplied by an ancestor or descendant.
-`AsyncContent` supplies the transaction but does not configure a SwiftUI `.transition` modifier.
+For content-to-content replacement, `AsyncContent` renders the new presentation in the consumer's
+current transaction because the category remains stable. When the category changes,
+`transitionAnimation: nil` clears ambient animation for that presentation replacement. This keeps
+consumer-owned list updates animated without making hidden/content/failure replacement inherit an
+unrelated ancestor animation. `AsyncContent` does not configure a SwiftUI `.transition` modifier.
 
 ### Animate successful content
 
-The content builder owns successful-value animation because it knows the relevant identity and
-domain fields. Attach collection animation where stable IDs are visible:
+The consumer owns successful-value animation because it knows the relevant identity and domain
+fields. Attach array-replacement animation to the container that performs layout:
 
 ```swift
-AsyncContent(viewModel.entries) { entries, _ in
-  ForEach(entries) { entry in
-    EntryRow(entry: entry)
-      .animation(.snappy, value: entry.amount)
+List {
+  AsyncContent(viewModel.entries) { entries, _ in
+    ForEach(entries) { entry in
+      EntryRow(entry: entry)
+        .animation(.snappy, value: entry.amount)
+    }
   }
-  .animation(.snappy, value: entries.map(\.id))
 }
-```
-
-The same `ForEach` boundary works inside `List`, `VStack`, `LazyVStack`, or another container. The
-ID projection responds only to insertion, removal, and reordering; row-level triggers describe
-value changes.
-
-Use `latestValueRevision` when the intended trigger is equality of the entire successful value:
-
-```swift
-EntrySummary(entries: entries)
-  .animation(.snappy, value: viewModel.entries.latestValueRevision)
+.animation(.snappy, value: viewModel.entries.latestValueRevision)
 ```
 
 The revision advances for an unequal replacement of an available successful value. Equal
 `Equatable` replacements retain the new instance without advancing. Non-`Equatable` replacements
 advance after the first value. First success, reset, first success after reset, lifecycle, failure,
 and retry changes do not advance it. Values from different `ViewData` instances compare unequal.
+
+`latestValueRevision` follows whole-value equality, not collection identity. When only insertion,
+removal, and reordering should trigger animation, attach an ID projection where the collection value
+is available:
+
+```swift
+ForEach(entries) { entry in
+  EntryRow(entry: entry)
+}
+.animation(.snappy, value: entries.map(\.id))
+```
+
+Both forms work with `List`, `VStack`, `LazyVStack`, and other containers because `AsyncContent`
+does not commit content-to-content changes in a separate transaction.
 
 Use `phase.kind` separately when a larger view should respond to lifecycle rather than data.
 

@@ -26,7 +26,7 @@ import SwiftUI
 
 struct AnimatedReorderingExample: View {
     @State private var viewModel = AnimatedReorderingViewModel()
-    @State private var animatesRows = true
+    @State private var animatesListChanges = true
     @State private var animatesPresentation = true
     @State private var hidesRows = false
 
@@ -42,15 +42,15 @@ struct AnimatedReorderingExample: View {
 
             entriesPresentation
 
-            Section("Unanimated sibling") {
+            Section("Simultaneous sibling") {
                 Text("Sibling update \(viewModel.siblingRevision)")
                     .accessibilityIdentifier(SampleAppAccessibility.animatedReorderingSibling)
-                Text("This section changes in the same action without joining the row transition.")
+                Text("This value changes in the same action without an explicit content transition.")
                     .foregroundStyle(.secondary)
             }
 
             Section("Action") {
-                Toggle("Animate consumer row changes", isOn: $animatesRows)
+                Toggle("Animate consumer list changes", isOn: $animatesListChanges)
                     .accessibilityIdentifier(SampleAppAccessibility.animatedReorderingAnimation)
 
                 Toggle("Animate presentation changes", isOn: $animatesPresentation)
@@ -84,17 +84,21 @@ struct AnimatedReorderingExample: View {
                     systemImage: "rectangle.dashed.and.paperclip"
                 )
                 Label(
-                    animatesRows
-                        ? "Stable IDs and row values own content motion"
-                        : "Consumer row animation is disabled",
-                    systemImage: animatesRows ? "sparkles" : "sparkles.slash"
+                    animatesListChanges
+                        ? "The List owns stable-ID structural motion"
+                        : "Consumer list animation is disabled",
+                    systemImage: animatesListChanges ? "sparkles" : "sparkles.slash"
                 )
                 Label(
-                    "The sibling remains outside both animation scopes",
+                    "The sibling has no explicit content animation",
                     systemImage: "rectangle.topthird.inset.filled"
                 )
             }
         }
+        .animation(
+            animatesListChanges ? .snappy : nil,
+            value: viewModel.entries.latestValueRevision
+        )
         .accessibilityIdentifier(SampleAppAccessibility.animatedReorderingScreen)
         .navigationTitle("Animated reordering")
         .task {
@@ -125,14 +129,13 @@ struct AnimatedReorderingExample: View {
 
             ForEach(entries) { entry in
                 SampleEntryRow(entry: entry)
-                    .animation(animatesRows ? .snappy : nil, value: entry.detail)
+                    .animation(animatesListChanges ? .snappy : nil, value: entry.detail)
             }
-            .animation(animatesRows ? .snappy : nil, value: entries.map(\.id))
             .redacted(reason: source == .placeholder ? .placeholder : [])
         } header: {
             Text("Stable-ID rows")
         } footer: {
-            Text("Stable IDs own structure; each row owns its value changes.")
+            Text("The List revision animates stable-ID structure; each row owns its values.")
         }
     }
 }
@@ -152,7 +155,7 @@ private final class AnimatedReorderingViewModel {
 
         await context.load({
             let delay: Duration = SampleAppUITesting.isEnabled
-                ? .seconds(4)
+                ? .seconds(8)
                 : .milliseconds(1_200)
             try await Task.sleep(for: delay)
             return Self.originalEntries

@@ -135,7 +135,7 @@ nonisolated final class SampleAppUITests: XCTestCase {
         XCTAssertTrue(element(A11y.animatedReorderingScreen).waitForExistence(timeout: 3))
         let placeholder = app.staticTexts.matching(identifier: A11y.entry(0)).firstMatch
         XCTAssertTrue(placeholder.waitForExistence(timeout: 3))
-        XCTAssertTrue(waitForNonExistence(placeholder))
+        XCTAssertTrue(waitForNonExistence(placeholder, timeout: 10))
 
         XCTAssertEqual(element(A11y.animatedReorderingSibling).label, "Sibling update 0")
         let first = app.staticTexts.matching(identifier: A11y.entry(501)).firstMatch
@@ -154,6 +154,15 @@ nonisolated final class SampleAppUITests: XCTestCase {
         ))
         scrollUntilHittable(third, direction: .down)
         XCTAssertLessThan(third.frame.minY, first.frame.minY)
+
+        scrollUntilHittable(update, direction: .up)
+        update.tap()
+        XCTAssertTrue(waitForLabelContaining(
+            "Sibling update 2",
+            on: element(A11y.animatedReorderingSibling)
+        ))
+        scrollUntilHittable(first, direction: .down)
+        XCTAssertLessThan(first.frame.minY, third.frame.minY)
 
         let hide = element(A11y.animatedReorderingHide)
         scrollUntilHittable(hide, direction: .up)
@@ -182,11 +191,11 @@ nonisolated final class SampleAppUITests: XCTestCase {
         update.tap()
 
         XCTAssertTrue(waitForLabelContaining(
-            "Sibling update 2",
+            "Sibling update 3",
             on: element(A11y.animatedReorderingSibling)
         ))
-        scrollUntilHittable(first, direction: .down)
-        XCTAssertLessThan(first.frame.minY, third.frame.minY)
+        scrollUntilHittable(third, direction: .down)
+        XCTAssertLessThan(third.frame.minY, first.frame.minY)
     }
 
     @MainActor
@@ -212,7 +221,10 @@ nonisolated final class SampleAppUITests: XCTestCase {
     }
 
     @MainActor
-    private func waitForNonExistence(_ element: XCUIElement) -> Bool {
+    private func waitForNonExistence(
+        _ element: XCUIElement,
+        timeout: TimeInterval = 3
+    ) -> Bool {
         XCTWaiter.wait(
             for: [
                 XCTNSPredicateExpectation(
@@ -220,7 +232,7 @@ nonisolated final class SampleAppUITests: XCTestCase {
                     object: element
                 ),
             ],
-            timeout: 3
+            timeout: timeout
         ) == .completed
     }
 

@@ -115,40 +115,20 @@ struct AsyncContentTests {
         }
     }
 
-    @Test("Transition animation follows the post-mount rendering-category matrix")
-    func transitionAnimationClassifier() {
-        let cases: [(AsyncContentRenderingKind, AsyncContentRenderingKind, Bool)] = [
-            (.hidden, .hidden, false),
-            (.hidden, .content, true),
-            (.hidden, .failure, true),
-            (.content, .hidden, true),
-            (.content, .content, false),
-            (.content, .failure, true),
-            (.failure, .hidden, true),
-            (.failure, .content, true),
-            (.failure, .failure, false),
-        ]
-
-        for (previous, next, expected) in cases {
-            #expect(
-                (asyncContentTransitionAnimation(
-                    from: previous,
-                    to: next,
-                    transitionAnimation: .default
-                ) != nil) == expected
-            )
+    @Test("Each AsyncContent value captures one presentation snapshot")
+    func capturesPresentationSnapshot() throws {
+        let data = ViewData(1)
+        let original = AsyncContent(data) { value, _ in
+            Text("\(value)")
         }
-    }
 
-    @Test("Nil configuration originates no transition animation")
-    func nilTransitionAnimation() {
-        #expect(
-            asyncContentTransitionAnimation(
-                from: .hidden,
-                to: .content,
-                transitionAnimation: nil
-            ) == nil
-        )
+        data.set(2)
+
+        let updated = AsyncContent(data) { value, _ in
+            Text("\(value)")
+        }
+        #expect(try #require(original.rendering.content).value == 1)
+        #expect(try #require(updated.rendering.content).value == 2)
     }
 
     @Test("Latest, retained, and placeholder presentations are all content")
@@ -196,17 +176,23 @@ struct AsyncContentTests {
     func retryChangesUpdateBuilderInput() {
         let data = ViewData<Int>()
         data.fail(TestError.expected)
-        let content = AsyncContent(data) { value, _ in
+        let withoutRetry = AsyncContent(data) { value, _ in
             Text("\(value)")
         } failure: { error, retry in
             Button(error.localizedDescription) { retry?() }
         }
 
-        #expect(content.rendering.failure?.retryAction == nil)
-
         data.installRetryAction(ViewDataRetryAction {})
 
-        #expect(content.rendering.failure?.retryAction != nil)
+        let withRetry = AsyncContent(data) { value, _ in
+            Text("\(value)")
+        } failure: { error, retry in
+            Button(error.localizedDescription) { retry?() }
+        }
+        #expect(withoutRetry.rendering.failure?.retryAction == nil)
+        #expect(withRetry.rendering.failure?.retryAction != nil)
+        #expect(withoutRetry.rendering.kind == .failure)
+        #expect(withRetry.rendering.kind == .failure)
     }
 
     @Test("Unwrapping renders a non-optional latest value")
@@ -282,26 +268,25 @@ struct AsyncContentTests {
     @Test("Unwrapping treats a retained nil as unavailable while loading")
     func unwrappingRetainedNilWhileLoading() {
         let data = ViewData<Int?>(nil)
+        data.beginLoading()
+
         let content = AsyncContent(unwrapping: data) { value, _ in
             Text("\(value)")
         }
-
-        data.beginLoading()
-
         #expect(content.rendering.isHidden)
     }
 
     @Test("Unwrapping can render an explicit placeholder for a retained nil")
     func unwrappingPlaceholderForNil() throws {
         let data = ViewData<Int?>(nil)
+        data.beginLoading()
+
         let content = AsyncContent(
             unwrapping: data,
             loading: .placeholder(10)
         ) { value, _ in
             Text("\(value)")
         }
-
-        data.beginLoading()
 
         let presentation = try #require(content.rendering.content)
         #expect(presentation.value == 10)
@@ -311,6 +296,8 @@ struct AsyncContentTests {
     @Test("Unwrapping treats a retained nil as unavailable after failure")
     func unwrappingRetainedNilAfterFailure() throws {
         let data = ViewData<Int?>(nil)
+        data.fail(TestError.expected)
+
         let content = AsyncContent(
             unwrapping: data,
             failure: .retained
@@ -319,8 +306,6 @@ struct AsyncContentTests {
         } failure: { error, _ in
             Text(error.localizedDescription)
         }
-
-        data.fail(TestError.expected)
 
         let error = try #require(content.rendering.failure?.error as? TestError)
         #expect(error == .expected)
@@ -340,25 +325,23 @@ struct AsyncContentTests {
     @Test("Hidden loading content retains a presented failure during retry")
     func hiddenLoadingRetainsPresentedFailure() throws {
         let data = ViewData<Int>()
-        let content = AsyncContent(
-            data,
-            loading: .hidden,
-            failure: .failureContent
-        ) { value, _ in
-            Text("\(value)")
-        } failure: { error, _ in
-            Text(error.localizedDescription)
-        }
-
         data.fail(TestError.expected)
+
+        let failedContent = hiddenLoadingContent(data)
+
+        let failureError = try #require(failedContent.rendering.failure?.error as? TestError)
+        #expect(failureError == .expected)
+
         data.beginLoading()
 
-        let retryError = try #require(content.rendering.failure?.error as? TestError)
+        let retryingContent = hiddenLoadingContent(data)
+        let retryError = try #require(retryingContent.rendering.failure?.error as? TestError)
         #expect(retryError == .expected)
 
         data.set(42)
 
-        let success = try #require(content.rendering.content)
+        let successfulContent = hiddenLoadingContent(data)
+        let success = try #require(successfulContent.rendering.content)
         #expect(success.value == 42)
         #expect(success.source == .latest)
 
@@ -366,13 +349,19 @@ struct AsyncContentTests {
         data.beginLoading()
         data.fail(TestError.subsequent)
 
-        let subsequentError = try #require(content.rendering.failure?.error as? TestError)
+        let subsequentContent = hiddenLoadingContent(data)
+        let subsequentError = try #require(
+            subsequentContent.rendering.failure?.error as? TestError
+        )
         #expect(subsequentError == .subsequent)
     }
 
     @Test("A placeholder replaces a failure while retrying")
     func placeholderReplacesRetryingFailure() throws {
         let data = ViewData<Int>()
+        data.fail(TestError.expected)
+        data.beginLoading()
+
         let content = AsyncContent(
             data,
             loading: .placeholder(10),
@@ -383,12 +372,23 @@ struct AsyncContentTests {
             Text(error.localizedDescription)
         }
 
-        data.fail(TestError.expected)
-        data.beginLoading()
-
         let presentation = try #require(content.rendering.content)
         #expect(presentation.value == 10)
         #expect(presentation.source == .placeholder)
+    }
+
+    private func hiddenLoadingContent(
+        _ data: ViewData<Int>
+    ) -> AsyncContent<Int, Text, Text> {
+        AsyncContent(
+            data,
+            loading: .hidden,
+            failure: .failureContent
+        ) { value, _ in
+            Text("\(value)")
+        } failure: { error, _ in
+            Text(error.localizedDescription)
+        }
     }
 }
 

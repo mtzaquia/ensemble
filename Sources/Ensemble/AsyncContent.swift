@@ -133,15 +133,6 @@ extension AsyncContentRendering {
     }
 }
 
-func asyncContentTransitionAnimation(
-    from previous: AsyncContentRenderingKind,
-    to next: AsyncContentRenderingKind,
-    transitionAnimation: Animation?
-) -> Animation? {
-    guard previous != next else { return nil }
-    return transitionAnimation
-}
-
 /// Renders a ``ViewData`` value according to view-local loading and failure policies.
 ///
 /// `AsyncContent` does not impose a list, section, stack, or other layout container. Its policies
@@ -153,6 +144,10 @@ func asyncContentTransitionAnimation(
 /// and failure content. Latest, retained, and placeholder values share one content category, so
 /// successful-value replacement does not receive an Ensemble-originated animation.
 ///
+/// Content-to-content replacement inherits the consumer's current transaction. Passing `nil` for
+/// `transitionAnimation` suppresses ambient animation when the rendered category changes, without
+/// affecting content-to-content updates where that category remains stable.
+///
 /// This animation does not configure a SwiftUI transition modifier and cannot infer collection
 /// identity from the opaque content builder. Animate insertion, removal, reordering, and value
 /// changes inside successful content at the identity-bearing consumer boundary.
@@ -161,8 +156,8 @@ func asyncContentTransitionAnimation(
 /// no content, start an initial binding from a stable ancestor rather than a `.task` modifier
 /// attached directly to the empty `AsyncContent` value.
 public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
-    private let makeRendering: () -> AsyncContentRendering<Value>
-    private let presentationRevision: () -> ViewDataPresentationRevision
+    private let renderingSnapshot: AsyncContentRendering<Value>
+    private let presentationRevision: ViewDataPresentationRevision
     private let transitionAnimation: Animation?
     private let content: (Value, AsyncContentSource) -> Content
     private let failureContent: (any Error, ViewDataRetryAction?) -> FailureContent
@@ -170,7 +165,7 @@ public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
     @ViewBuilder
     public var body: some View {
         AsyncContentRenderer(
-            makeRendering: makeRendering,
+            rendering: renderingSnapshot,
             presentationRevision: presentationRevision,
             transitionAnimation: transitionAnimation,
             content: content,
@@ -191,7 +186,7 @@ public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
     ///   - data: The presentation state to render.
     ///   - loading: The presentation used while `data` is empty or loading.
     ///   - transitionAnimation: The animation for post-mount changes between rendered categories,
-    ///     or `nil` for no Ensemble-supplied animation.
+    ///     or `nil` to suppress ambient animation for those changes.
     ///   - failure: The presentation used after `data` receives a failure.
     ///   - content: A builder receiving the rendered value and whether its source is latest,
     ///     retained, or a placeholder.
@@ -230,7 +225,7 @@ public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
     ///   - data: The presentation state to render.
     ///   - loading: The presentation used while `data` is empty or loading.
     ///   - transitionAnimation: The animation for post-mount changes between rendered categories,
-    ///     or `nil` for no Ensemble-supplied animation.
+    ///     or `nil` to suppress ambient animation for those changes.
     ///   - failure: The presentation used after `data` receives a failure.
     ///   - content: A builder receiving the rendered value and whether its source is latest,
     ///     retained, or a placeholder.
@@ -257,18 +252,16 @@ public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
         loading: AsyncContentLoadingPolicy<Value>,
         failureRendering: AsyncContentFailureRendering,
         transitionAnimation: Animation?,
-        project: @escaping (SourceValue) -> Value?,
+        project: (SourceValue) -> Value?,
         content: @escaping (Value, AsyncContentSource) -> Content,
         failureContent: @escaping (any Error, ViewDataRetryAction?) -> FailureContent
     ) {
-        self.makeRendering = {
-            data.asyncContentRendering(
-                loadingPolicy: loading,
-                failureRendering: failureRendering,
-                project: project
-            )
-        }
-        self.presentationRevision = { data.presentationRevision }
+        self.renderingSnapshot = data.asyncContentRendering(
+            loadingPolicy: loading,
+            failureRendering: failureRendering,
+            project: project
+        )
+        self.presentationRevision = data.presentationRevision
         self.transitionAnimation = transitionAnimation
         self.content = content
         self.failureContent = failureContent
@@ -287,7 +280,7 @@ extension AsyncContent {
     ///   - data: The optional presentation state to render.
     ///   - loading: The presentation used while `data` is empty or loading.
     ///   - transitionAnimation: The animation for post-mount changes between rendered categories,
-    ///     or `nil` for no Ensemble-supplied animation.
+    ///     or `nil` to suppress ambient animation for those changes.
     ///   - failure: The presentation used after `data` receives a failure.
     ///   - content: A builder receiving the unwrapped value and whether its source is latest,
     ///     retained, or a placeholder.
@@ -323,7 +316,7 @@ extension AsyncContent {
     ///   - data: The optional presentation state to render.
     ///   - loading: The presentation used while `data` is empty or loading.
     ///   - transitionAnimation: The animation for post-mount changes between rendered categories,
-    ///     or `nil` for no Ensemble-supplied animation.
+    ///     or `nil` to suppress ambient animation for those changes.
     ///   - failure: The presentation used after `data` receives a failure.
     ///   - content: A builder receiving the unwrapped value and whether its source is latest,
     ///     retained, or a placeholder.
@@ -348,48 +341,22 @@ extension AsyncContent {
 
 extension AsyncContent {
     var rendering: AsyncContentRendering<Value> {
-        makeRendering()
+        renderingSnapshot
     }
 }
 
-// Keep category changes stable through ViewData's observation invalidation, then replace them
-// locally so containers such as List receive structural changes inside this transaction. Within an
-// unchanged category, render the current presentation so consumer-owned identity animation remains
-// attached to the original data update.
 private struct AsyncContentRenderer<Value, Content: View, FailureContent: View>: View {
-    let makeRendering: () -> AsyncContentRendering<Value>
-    let presentationRevision: () -> ViewDataPresentationRevision
+    let rendering: AsyncContentRendering<Value>
+    // This concrete input distinguishes accepted presentation changes whose opaque rendering values
+    // cannot be compared structurally by SwiftUI.
+    let presentationRevision: ViewDataPresentationRevision
     let transitionAnimation: Animation?
     let content: (Value, AsyncContentSource) -> Content
     let failureContent: (any Error, ViewDataRetryAction?) -> FailureContent
 
-    @State private var rendering: AsyncContentRendering<Value>
-
-    init(
-        makeRendering: @escaping () -> AsyncContentRendering<Value>,
-        presentationRevision: @escaping () -> ViewDataPresentationRevision,
-        transitionAnimation: Animation?,
-        content: @escaping (Value, AsyncContentSource) -> Content,
-        failureContent: @escaping (any Error, ViewDataRetryAction?) -> FailureContent
-    ) {
-        self.makeRendering = makeRendering
-        self.presentationRevision = presentationRevision
-        self.transitionAnimation = transitionAnimation
-        self.content = content
-        self.failureContent = failureContent
-        self._rendering = State(initialValue: makeRendering())
-    }
-
     var body: some View {
-        let currentRendering = makeRendering()
-        let displayedRendering = if currentRendering.kind == rendering.kind {
-            currentRendering
-        } else {
-            rendering
-        }
-
         Group {
-            switch displayedRendering {
+            switch rendering {
             case .hidden:
                 EmptyView()
             case .content(let value, let source):
@@ -398,21 +365,7 @@ private struct AsyncContentRenderer<Value, Content: View, FailureContent: View>:
                 failureContent(error, retryAction)
             }
         }
-        .onChange(of: presentationRevision()) {
-            let nextRendering = makeRendering()
-
-            if let animation = asyncContentTransitionAnimation(
-                from: rendering.kind,
-                to: nextRendering.kind,
-                transitionAnimation: transitionAnimation
-            ) {
-                withAnimation(animation) {
-                    rendering = nextRendering
-                }
-            } else {
-                rendering = nextRendering
-            }
-        }
+        .animation(transitionAnimation, value: rendering.kind)
     }
 }
 
