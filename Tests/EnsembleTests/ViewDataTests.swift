@@ -41,6 +41,54 @@ struct ViewDataTests {
 
         #expect(data.isSuccessful)
         #expect(data.latestValue == .available(42))
+        #expect(data.phase.kind == .success)
+    }
+
+    @Test("Phase kind omits the failure's associated error")
+    func phaseKind() {
+        let data = ViewData<Int>()
+
+        #expect(data.phase.kind == .empty)
+        data.beginLoading()
+        #expect(data.phase.kind == .loading)
+        data.set(42)
+        #expect(data.phase.kind == .success)
+        data.fail(TestError.expected)
+        #expect(data.phase.kind == .failure)
+    }
+
+    @Test("Content revision advances only for changed retained successful data")
+    func contentRevisionTracksSuccessfulData() {
+        let data = ViewData(1)
+        let initial = data.contentRevision
+
+        data.beginLoading()
+        data.set(1)
+        #expect(data.contentRevision == initial)
+
+        data.set(2)
+        let changed = data.contentRevision
+        #expect(changed != initial)
+
+        data.beginLoading()
+        data.fail(TestError.expected)
+        data.set(2)
+        #expect(data.contentRevision == changed)
+
+        data.set(3)
+        #expect(data.contentRevision != changed)
+    }
+
+    @Test("Non-equatable successful values advance content revision")
+    func nonEquatableContentRevision() {
+        struct Value {}
+        let data = ViewData(Value())
+        let first = data.contentRevision
+
+        data.beginLoading()
+        data.set(Value())
+
+        #expect(data.contentRevision != first)
     }
 
     @Test("Internal transitions preserve the latest value while loading and failed")
@@ -96,6 +144,7 @@ struct ViewDataTests {
     }
 
     @Test("Animation values identify their source and every accepted transition")
+    @available(*, deprecated)
     func animationValues() {
         struct NonEquatable {}
 
@@ -138,6 +187,7 @@ struct ViewDataTests {
     }
 
     @Test("An equivalent success keeps its animation value and retains the latest instance")
+    @available(*, deprecated)
     func equivalentSuccessDoesNotAdvanceAnimation() {
         final class Model: Equatable {
             let id: Int
@@ -172,6 +222,7 @@ struct ViewDataTests {
     }
 
     @Test("An equivalent optional nil keeps its animation value")
+    @available(*, deprecated)
     func equivalentOptionalNilDoesNotAdvanceAnimation() {
         let data = ViewData<Int?>(nil)
         let animationValue = data.animationValue
@@ -183,6 +234,7 @@ struct ViewDataTests {
     }
 
     @Test("An equivalent value still advances animation when it recovers the phase")
+    @available(*, deprecated)
     func equivalentSuccessRecoversPhase() {
         let data = ViewData(42)
 
@@ -200,6 +252,7 @@ struct ViewDataTests {
     }
 
     @Test("A successful update invalidates presentation in one observation cycle")
+    @available(*, deprecated)
     func successfulUpdateIsCoherent() {
         let data = ViewData([1, 2, 3])
         let initialAnimationValue = data.animationValue
@@ -617,6 +670,7 @@ struct ViewDataTests {
     }
 
     @Test("Removing retry availability advances presentation while failure remains")
+    @available(*, deprecated)
     func cancellingFailedBindingAdvancesPresentation() async {
         let (stream, continuation) = AsyncStream<Result<Int, TestError>>.makeStream()
         let data = ViewData<Int>()
@@ -703,7 +757,6 @@ private final class ViewDataPresentationObservation<Value> {
         withObservationTracking {
             _ = data.phase
             _ = data.latestValue
-            _ = data.animationValue
             _ = data.presentationRevision
         } onChange: { [weak self] in
             MainActor.assumeIsolated {

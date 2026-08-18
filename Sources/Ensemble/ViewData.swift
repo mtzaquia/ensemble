@@ -26,9 +26,9 @@ import Observation
 /// An opaque comparison value for intentionally coordinating animations beyond one
 /// ``AsyncContent`` presentation.
 ///
-/// Prefer the `animation` parameter on ``AsyncContent`` when animating that content. Use this value
-/// with SwiftUI's `animation(_:value:)` modifier only when several views or a larger container
-/// should deliberately share the same animation transaction.
+/// This value describes every accepted presentation mutation, including lifecycle, failure, reset,
+/// and retry changes. It does not identify changed successful data and should not be used as the
+/// smart update trigger for ``AsyncContent``.
 ///
 /// Values from different `ViewData` instances compare unequal. The value changes when its instance
 /// enters another lifecycle phase, receives a changed value or error, resets, or changes retry
@@ -40,6 +40,15 @@ import Observation
 ///
 /// It does not retain or compare the presented value, so it remains equatable and sendable
 /// regardless of `Value`.
+///
+/// - Deprecated: Use ``AsyncContent``'s `animation` parameter for local presentation animation. For
+///   a larger coordinated update, combine ``ViewData/phase``'s `kind` with a domain projection such
+///   as an identifier or revision instead.
+@available(
+    *,
+    deprecated,
+    message: "Use AsyncContent's animation parameter for local presentation animation, or combine phase.kind with a domain projection for a larger update."
+)
 public struct ViewDataAnimationValue: Equatable, Sendable {
     fileprivate let sourceID: UUID
     fileprivate let revision: UInt
@@ -63,6 +72,26 @@ public struct ViewDataAnimationValue: Equatable, Sendable {
 struct ViewDataPresentationRevision: Equatable, Sendable {
     fileprivate let sourceID: UUID
     fileprivate let revision: UInt
+}
+
+// Drives AsyncContent's smart update animation independently of lifecycle and retry changes.
+struct ViewDataContentRevision: Equatable, Sendable {
+    fileprivate let sourceID: UUID
+    fileprivate let revision: UInt
+
+    fileprivate init(sourceID: UUID, revision: UInt) {
+        self.sourceID = sourceID
+        self.revision = revision
+    }
+
+    fileprivate init() {
+        self.sourceID = UUID()
+        self.revision = 0
+    }
+
+    fileprivate func advanced() -> Self {
+        Self(sourceID: sourceID, revision: revision &+ 1)
+    }
 }
 
 /// The availability of a successful value retained by ``ViewData``.
@@ -99,6 +128,21 @@ extension ViewDataAvailability: Sendable where Value: Sendable {}
 public final class ViewData<Value> {
     /// The current lifecycle phase of a ``ViewData`` value.
     public enum Phase {
+        /// The case-only lifecycle identity of a ``ViewData`` phase.
+        public enum Kind: Equatable, Sendable {
+            /// No successful value has been supplied, or the state was explicitly cleared.
+            case empty
+
+            /// The state is waiting for its next update.
+            case loading
+
+            /// A successful value is available.
+            case success
+
+            /// The latest update contained an error.
+            case failure
+        }
+
         /// No successful value has been supplied, or the state was explicitly cleared.
         case empty
 
@@ -114,6 +158,16 @@ public final class ViewData<Value> {
         ///
         /// A subsequent successful update recovers the state without requiring a new binding.
         case failure(any Error)
+
+        /// The case-only identity of this phase, without its associated error.
+        public var kind: Kind {
+            switch self {
+            case .empty: .empty
+            case .loading: .loading
+            case .success: .success
+            case .failure: .failure
+            }
+        }
     }
 
     private struct Presentation {
@@ -121,6 +175,7 @@ public final class ViewData<Value> {
         var latestValue: ViewDataAvailability<Value>
         var retryAction: ViewDataRetryAction?
         var animationValue = ViewDataAnimationValue()
+        var contentRevision = ViewDataContentRevision()
         var revision: UInt = 0
     }
 
@@ -136,6 +191,10 @@ public final class ViewData<Value> {
     /// Loading and failure updates preserve this availability. ``reset()`` changes it to
     /// ``ViewDataAvailability/unavailable``. When `Value` is optional, `.available(nil)` represents
     /// a successful result whose domain value is absent.
+    ///
+    /// When `Value` is `Equatable`, use this value or a domain projection of it as a higher-level
+    /// data-animation trigger. Use ``ViewData/phase``'s `kind` when the trigger should describe a
+    /// lifecycle transition instead.
     public var latestValue: ViewDataAvailability<Value> {
         presentation.latestValue
     }
@@ -164,9 +223,14 @@ public final class ViewData<Value> {
     /// successful, receiving an equal `Value` retains that value without changing this comparison
     /// value. A non-equatable `Value` is always treated as changed.
     ///
-    /// Prefer the `animation` parameter on ``AsyncContent`` for its presentation. Pass this value
-    /// to SwiftUI's `animation(_:value:)` modifier only when several views or a larger container
-    /// should deliberately animate together.
+    /// - Deprecated: Use ``AsyncContent``'s `animation` parameter for local presentation animation.
+    ///   For a larger coordinated update, use `phase.kind` with a meaningful domain projection such
+    ///   as `latestValue`, stable IDs, or a server revision.
+    @available(
+        *,
+        deprecated,
+        message: "Use AsyncContent's animation parameter for local presentation animation, or combine phase.kind with a domain projection for a larger update."
+    )
     public var animationValue: ViewDataAnimationValue {
         presentation.animationValue
     }
@@ -176,6 +240,10 @@ public final class ViewData<Value> {
             sourceID: presentation.animationValue.sourceID,
             revision: presentation.revision
         )
+    }
+
+    var contentRevision: ViewDataContentRevision {
+        presentation.contentRevision
     }
 
     var retryAction: ViewDataRetryAction? {
@@ -206,6 +274,7 @@ public final class ViewData<Value> {
             latestValue: .available(value),
             retryAction: nil
         )
+        self.presentation.contentRevision = self.presentation.contentRevision.advanced()
     }
 
     // Work around swiftlang/swift#90385.
@@ -215,7 +284,10 @@ public final class ViewData<Value> {
     func set(_ value: Value) {
         currentLoadingToken = nil
         loadingFailure = nil
-        updatePresentation(advancingAnimation: shouldAdvanceAnimation(for: value)) {
+        updatePresentation(
+            advancingAnimation: shouldAdvanceAnimation(for: value),
+            advancingContent: shouldAdvanceContentRevision(for: value)
+        ) {
             $0.latestValue = .available(value)
             $0.phase = .success
         }
@@ -302,6 +374,11 @@ extension ViewData {
         return valuesAreEqual(latestValue, value) == false
     }
 
+    private func shouldAdvanceContentRevision(for value: Value) -> Bool {
+        guard case .available(let latestValue) = presentation.latestValue else { return true }
+        return valuesAreEqual(latestValue, value) == false
+    }
+
     private func valuesAreEqual(_ lhs: Value, _ rhs: Value) -> Bool {
         func compare<EquatableValue: Equatable>(
             _ lhs: EquatableValue,
@@ -317,12 +394,16 @@ extension ViewData {
 
     private func updatePresentation(
         advancingAnimation: Bool = true,
+        advancingContent: Bool = false,
         _ update: (inout Presentation) -> Void
     ) {
         var nextPresentation = presentation
         update(&nextPresentation)
         if advancingAnimation {
             nextPresentation.animationValue = nextPresentation.animationValue.advanced()
+        }
+        if advancingContent {
+            nextPresentation.contentRevision = nextPresentation.contentRevision.advanced()
         }
         nextPresentation.revision &+= 1
         presentation = nextPresentation

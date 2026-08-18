@@ -129,10 +129,14 @@ nonisolated final class SampleAppUITests: XCTestCase {
     }
 
     @MainActor
-    func testAnimatedPresentationUpdatesAlongsideItsSibling() {
+    func testSmartPresentationUpdatesAlongsideItsSibling() {
         launch(.animatedReordering)
 
         XCTAssertTrue(element(A11y.animatedReorderingScreen).waitForExistence(timeout: 3))
+        let placeholder = app.staticTexts.matching(identifier: A11y.entry(0)).firstMatch
+        XCTAssertTrue(placeholder.waitForExistence(timeout: 3))
+        XCTAssertTrue(waitForNonExistence(placeholder))
+
         XCTAssertEqual(element(A11y.animatedReorderingSibling).label, "Sibling update 0")
         let first = app.staticTexts.matching(identifier: A11y.entry(501)).firstMatch
         let third = app.staticTexts.matching(identifier: A11y.entry(503)).firstMatch
@@ -150,6 +154,16 @@ nonisolated final class SampleAppUITests: XCTestCase {
         ))
         scrollUntilHittable(third, direction: .down)
         XCTAssertLessThan(third.frame.minY, first.frame.minY)
+
+        let hide = element(A11y.animatedReorderingHide)
+        scrollUntilHittable(hide, direction: .up)
+        hide.tap()
+        XCTAssertTrue(waitForNonExistence(first))
+
+        let restore = element(A11y.animatedReorderingRestore)
+        scrollUntilHittable(restore, direction: .up)
+        restore.tap()
+        XCTAssertTrue(first.waitForExistence(timeout: 3))
 
         let animation = app.switches[A11y.animatedReorderingAnimation]
         scrollUntilHittable(animation, direction: .up)
@@ -245,6 +259,8 @@ private enum A11y {
     static let animatedReorderingReverse = "sample.animated-reordering.reverse"
     static let animatedReorderingSibling = "sample.animated-reordering.sibling"
     static let animatedReorderingAnimation = "sample.animated-reordering.animation"
+    static let animatedReorderingHide = "sample.animated-reordering.hide"
+    static let animatedReorderingRestore = "sample.animated-reordering.restore"
 
     static let independentSectionsScreen = "sample.independent-sections.screen"
     static let independentSectionsReload = "sample.independent-sections.reload"

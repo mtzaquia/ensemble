@@ -16,8 +16,8 @@ Pass an `AsyncContentLoadingPolicy` through the `loading` argument:
 
 Loading policies control the successful-content builder; they do not hide a failure builder that
 was already presented. With `.hidden`, an initial load renders nothing, but retrying a presented
-failure keeps that failure visible until the source succeeds or fails again. If a loading policy
-can supply retained or placeholder content, that content replaces the failure during the retry.
+failure keeps that failure visible until the source succeeds or fails again. If a loading policy can
+supply retained or placeholder content, that content replaces the failure during the retry.
 
 The policy applies to an empty `ViewData` immediately, before a source changes its phase to
 loading. A `.placeholder(value)` therefore participates in the first layout pass instead of
@@ -25,10 +25,11 @@ briefly rendering no content.
 
 The default is `.retained`. Before the first successful value it renders nothing; on later loads it
 keeps the retained successful value visible. Use `.placeholder(value)` to show a skeleton on the
-first load while retaining useful content during refresh. Placeholder values are presentation
-input rather than successful data: Ensemble does not store them in `ViewData.latestValue`.
+first load while retaining useful content during refresh. Placeholder values are presentation input
+rather than successful data: Ensemble does not store them in `ViewData.latestValue`.
 
-Use the `AsyncContentSource` passed to the success builder to adjust presentation without changing the data model:
+Use the `AsyncContentSource` passed to the success builder to adjust presentation without changing
+the data model:
 
 ```swift
 AsyncContent(
@@ -60,8 +61,8 @@ AsyncContent(unwrapping: viewModel.profile) { profile, source in
 
 A successful `nil` remains a successful result in `ViewData`, but this initializer omits its
 content. While empty or loading, an explicit `.placeholder(value)` still renders because the
-placeholder is non-optional presentation input. A retained `nil` does not count as retained
-content for this initializer.
+placeholder is non-optional presentation input. A retained `nil` does not count as retained content
+for this initializer.
 
 For direct state inspection, use `phase` for the current operation state and `latestValue` for
 successful-result availability. `.available(nil)` means the operation succeeded with an absent
@@ -69,31 +70,46 @@ domain value; `.unavailable` means no successful result is retained.
 
 ## Animate presentation changes
 
-Pass an animation directly to the `AsyncContent` whose presentation should change:
+Every `AsyncContent` initializer has an `animation: Animation?` parameter whose default is
+`.default`. The default is a smart local animation. The presentation visible on the initial mount is
+seeded without animation, so a screen does not fly in on its first draw. After mount, genuine
+structural changes are animated at this `AsyncContent` boundary, including hidden/content insertion
+or removal, placeholder/content replacement, failure/content replacement, and changed successful
+values.
+
+The smart policy does not animate the following transitions:
+
+- an equal successful value, including when it is retained during loading or failure;
+- a latest/retained source-only change when the successful data is unchanged;
+- retry-action availability and lifecycle changes that leave the rendered content equivalent;
+- a placeholder-to-placeholder or failure-to-failure update.
+
+Values without `Equatable` conformance count as changed whenever a successful value is accepted.
+Equal `Equatable` replacements retain the newly supplied instance without triggering smart update
+animation. A reset followed by new content is a post-mount structural removal and insertion, so it
+animates when those updates are observed separately.
+
+The animation is applied at the `AsyncContent` boundary, so a `List` can animate stable-ID row or
+section changes without animating unrelated state that changed in the same action:
 
 ```swift
 List {
-  AsyncContent(viewModel.entries, animation: .default) { entries, _ in
+  AsyncContent(viewModel.entries) { entries, _ in
     EntrySection(entries)
   }
 }
 ```
 
-`AsyncContent` applies the animation when it presents an accepted loading, success, failure,
-reset, or retry-availability change. Applying the transaction at that boundary lets containers
-such as `List` observe row and section changes without attaching an animation modifier to the
-whole container. Unrelated state that changed alongside the `ViewData` update is therefore not
-pulled into the same animation.
+Use a custom curve when the smart update policy is right but the timing should be different:
 
-The presence of the argument is meaningful:
+```swift
+AsyncContent(viewModel.entries, animation: .easeInOut(duration: 0.35)) { entries, _ in
+  EntrySection(entries)
+}
+```
 
-| Call | Presentation transaction |
-| --- | --- |
-| Omit `animation` | Inherit the surrounding transaction |
-| Pass a non-`nil` animation | Apply that animation locally |
-| Pass `animation: nil` | Disable animation locally, including an inherited animation |
-
-This makes explicit disabling available at the same boundary:
+Pass `animation: nil` to disable local animation entirely. This is useful for a reduced-motion
+branch or an alternate sample path:
 
 ```swift
 AsyncContent(viewModel.entries, animation: nil) { entries, _ in
@@ -101,35 +117,30 @@ AsyncContent(viewModel.entries, animation: nil) { entries, _ in
 }
 ```
 
-When an explicitly animated `AsyncContent` receives an equal `Equatable` value while already
-successful, it renders the newly supplied value without applying its animation. An `AsyncContent`
-that omits `animation` continues to inherit the caller's transaction. Values without `Equatable`
-conformance are treated as changed whenever they are received.
+Omitting `animation` no longer inherits an animation from the surrounding transaction. It selects
+the default smart update policy. The explicit `nil` value disables local animation even when an
+ancestor supplies an animated transaction.
 
-### Coordinate a larger hierarchy
+## Use higher-level semantic triggers
 
-`ViewData.animationValue` is the advanced path for deliberately coordinating several views or a
-larger container around the same presentation transition:
+Use the presentation animation parameter for one `AsyncContent` region. When a larger view owns a
+meaningful semantic transition, coordinate it with the state that describes that transition rather
+than with Ensemble's internal lifecycle bookkeeping:
 
-```swift
-VStack {
-  AsyncContent(viewModel.entries) { entries, _ in
-    EntryRows(entries)
-  }
+- For an `Equatable` `Value`, use `latestValue` (or a domain projection of it) to trigger a data
+  animation. This compares the successful domain value and distinguishes unavailable state from an
+  available optional `nil`.
+- Use `phase.kind` when the larger view should react to lifecycle case changes. `phase.kind` is an
+  `Equatable` and `Sendable` projection of `Phase`; it omits the associated failure error while
+  preserving the public `Phase` contract.
+- For a non-`Equatable` value, expose a meaningful domain projection such as stable IDs, a content
+  revision, or a server version and use that projection as the higher-level trigger.
 
-  EntriesSummary(phase: viewModel.entries.phase)
-}
-.animation(.default, value: viewModel.entries.animationValue)
-```
-
-The modifier applies to every animatable change in its subtree during that update. Do not attach it
-to a `List` or screen ancestor merely to animate one `AsyncContent`; use that instance's `animation`
-parameter instead.
-
-`animationValue` changes with the same accepted presentation transitions that drive the initializer
-animation. It is opaque and does not retain or compare `Value`, so it works when the presented value
-is not `Equatable`. Reading it repeatedly without a presentation update returns an equal token,
-while tokens from different `ViewData` instances compare unequal.
+`ViewData.animationValue` and `ViewDataAnimationValue` remain available as deprecated compatibility
+API for code that shipped with them. They describe every accepted presentation mutation, including
+failure and retry changes, and are not the smart data-animation trigger. Migrate local presentation
+animation to `AsyncContent(animation:)`; migrate larger-scope animation to `latestValue`,
+`phase.kind`, or a meaningful domain projection.
 
 ## Choose failure behavior
 
@@ -143,8 +154,8 @@ When supplying a failure builder, pass an `AsyncContentFailurePolicy` through th
 The default is `.failureContent`, making the presence of a failure builder an explicit choice to
 present failure UI.
 
-Use `.failureContent` when failed data should show the failure builder instead of latest or
-retained content. It replaces only the content produced by that `AsyncContent` instance:
+Use `.failureContent` when failed data should show the failure builder instead of latest or retained
+content. It replaces only the content produced by that `AsyncContent` instance:
 
 ```swift
 AsyncContent(
@@ -215,8 +226,8 @@ List {
 }
 ```
 
-The outer `List` stays mounted while each section moves through its own phase. An app can also place
-`AsyncContent` around a larger composed region, but that is ordinary SwiftUI composition rather
-than a separate whole-screen failure mode in Ensemble.
+The outer `List` stays mounted while each section moves through its own phase. An app can also
+place `AsyncContent` around a larger composed region, but that is ordinary SwiftUI composition
+rather than a separate whole-screen failure mode in Ensemble.
 
 Next: [Getting started](getting-started.md) · [Sources and lifecycle](sources-and-lifecycle.md)

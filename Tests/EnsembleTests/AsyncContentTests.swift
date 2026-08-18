@@ -112,6 +112,42 @@ struct AsyncContentTests {
         }
     }
 
+    @Test("Smart animation follows the post-mount rendering matrix")
+    func smartAnimationClassifier() {
+        let latest = AsyncContentRenderingKind.content(.latest)
+        let retained = AsyncContentRenderingKind.content(.retained)
+        let placeholder = AsyncContentRenderingKind.content(.placeholder)
+
+        let cases: [(AsyncContentRenderingKind?, AsyncContentRenderingKind, Bool, Bool)] = [
+            (nil, latest, true, false),
+            (.hidden, latest, true, true),
+            (placeholder, latest, true, true),
+            (latest, latest, true, true),
+            (latest, retained, false, false),
+            (retained, latest, false, false),
+            (retained, latest, true, true),
+            (latest, .failure, true, true),
+            (.failure, latest, true, true),
+            (latest, .hidden, true, true),
+            (.hidden, latest, true, true),
+            (latest, latest, false, false),
+            (retained, retained, true, true),
+            (placeholder, placeholder, true, false),
+            (.failure, .hidden, true, true),
+            (.hidden, .failure, true, true),
+        ]
+
+        for (previous, next, contentChanged, expected) in cases {
+            #expect(
+                asyncContentShouldAnimate(
+                    from: previous,
+                    to: next,
+                    contentRevisionChanged: contentChanged
+                ) == expected
+            )
+        }
+    }
+
     @available(*, deprecated)
     @Test("Deprecated presentation names forward to their replacements")
     func deprecatedPresentationNames() {

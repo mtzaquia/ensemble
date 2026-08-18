@@ -27,9 +27,20 @@ import SwiftUI
 struct AnimatedReorderingExample: View {
     @State private var viewModel = AnimatedReorderingViewModel()
     @State private var animatesRows = true
+    @State private var hidesRows = false
 
     var body: some View {
         List {
+            Section("Initial loading") {
+                Text("The first frame uses a local placeholder; mounting it never flies in.")
+                    .foregroundStyle(.secondary)
+                Text("The delayed real result is a post-mount replacement, so the smart policy animates it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            entriesPresentation
+
             Section("Unanimated sibling") {
                 Text("Sibling update \(viewModel.siblingRevision)")
                     .accessibilityIdentifier(SampleAppAccessibility.animatedReorderingSibling)
@@ -37,42 +48,88 @@ struct AnimatedReorderingExample: View {
                     .foregroundStyle(.secondary)
             }
 
-            AsyncContent(
-                viewModel.entries,
-                animation: animatesRows ? .default : nil
-            ) { entries, source in
-                Section {
-                    SampleEntryRows(entries: entries, source: source)
-                } header: {
-                    Text("Stable-ID rows")
-                } footer: {
-                    Text("AsyncContent supplies the transaction List uses for this structural update.")
-                }
-            }
-
             Section("Action") {
-                Toggle("Animate row changes", isOn: $animatesRows)
+                Toggle("Animate changed rows", isOn: $animatesRows)
                     .accessibilityIdentifier(SampleAppAccessibility.animatedReorderingAnimation)
 
                 Button("Update sibling and reverse rows") {
                     viewModel.updateBoth()
                 }
                 .accessibilityIdentifier(SampleAppAccessibility.animatedReorderingReverse)
+
+                Button(hidesRows ? "Rows are hidden" : "Hide rows") {
+                    hidesRows = true
+                    viewModel.hideRows()
+                }
+                .disabled(hidesRows)
+                .accessibilityIdentifier(SampleAppAccessibility.animatedReorderingHide)
+
+                Button("Restore rows") {
+                    hidesRows = false
+                    viewModel.restoreRows()
+                }
+                .disabled(hidesRows == false)
+                .accessibilityIdentifier(SampleAppAccessibility.animatedReorderingRestore)
             }
 
             Section("What this shows") {
                 Label("Rows keep the same identities", systemImage: "number")
+                Label("Hide and restore animate this AsyncContent section's insertion and removal", systemImage: "rectangle.dashed.and.paperclip")
                 Label(
                     animatesRows
-                        ? "A supplied animation moves only these rows"
+                        ? "The default AsyncContent animation moves only changed rows"
                         : "An explicit nil disables animation for these rows",
                     systemImage: animatesRows ? "sparkles" : "sparkles.slash"
                 )
                 Label("The sibling starts from its new position", systemImage: "rectangle.topthird.inset.filled")
+                Text("UI tests verify final order and source changes; inspect this screen in Simulator to see motion.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .accessibilityIdentifier(SampleAppAccessibility.animatedReorderingScreen)
         .navigationTitle("Animated reordering")
+        .task {
+            await viewModel.start()
+        }
+    }
+
+    @ViewBuilder
+    private var entriesPresentation: some View {
+        if animatesRows {
+            AsyncContent(
+                viewModel.entries,
+                loading: hidesRows ? .hidden : .placeholder(SampleEntry.placeholders)
+            ) { entries, source in
+                rowsSection(entries: entries, source: source)
+            }
+        } else {
+            AsyncContent(
+                viewModel.entries,
+                loading: hidesRows ? .hidden : .placeholder(SampleEntry.placeholders),
+                animation: nil
+            ) { entries, source in
+                rowsSection(entries: entries, source: source)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func rowsSection(entries: [SampleEntry], source: AsyncContentSource) -> some View {
+        Section {
+            HStack {
+                Text("Rendered source")
+                Spacer()
+                SampleSourceBadge(source: source)
+            }
+            .accessibilityIdentifier(SampleAppAccessibility.animatedReorderingSource)
+
+            SampleEntryRows(entries: entries, source: source)
+        } header: {
+            Text("Stable-ID rows")
+        } footer: {
+            Text("After mount, smart animation targets structural changes and changed latest or retained data.")
+        }
     }
 }
 
@@ -83,9 +140,23 @@ private final class AnimatedReorderingViewModel {
 
     @ObservationIgnored private let context = ViewDataContext()
     @ObservationIgnored private var isReversed = false
+    @ObservationIgnored private var didStart = false
 
     init() {
-        entries = ViewData(Self.originalEntries)
+        entries = ViewData()
+    }
+
+    func start() async {
+        guard didStart == false else { return }
+        didStart = true
+
+        await context.load({
+            let delay: Duration = SampleAppUITesting.isEnabled
+                ? .seconds(4)
+                : .milliseconds(1_200)
+            try await Task.sleep(for: delay)
+            return Self.originalEntries
+        }, to: entries)
     }
 
     func updateBoth() {
@@ -96,6 +167,17 @@ private final class AnimatedReorderingViewModel {
         Task { @MainActor [weak self] in
             guard let self else { return }
             await self.context.load({ nextEntries }, to: self.entries)
+        }
+    }
+
+    func hideRows() {
+        entries.reset()
+    }
+
+    func restoreRows() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.context.load({ Self.originalEntries }, to: self.entries)
         }
     }
 

@@ -20,7 +20,7 @@ a failure, or nothing.
 - Keep useful data visible while a refresh is loading or fails.
 - Recover after a failure without terminating the stream.
 - Reload cold sources with `.resubscribe` or signal a hot source with `.refresh(action)`.
-- Give each screen or section its own loading, failure, and animation behavior.
+- Give each screen or section its own loading, failure, and smart update-animation behavior.
 
 ```swift
 AsyncContent(viewModel.entries) { entries, _ in
@@ -138,8 +138,11 @@ That is the core idea: bind observable presentation data once, then render its l
 ## Sample app
 
 Open [`SampleApp/SampleApp.xcodeproj`](SampleApp/SampleApp.xcodeproj) to explore dedicated failure
-content, seeded content retained through refresh, independently loading sections, and locally
-scoped animated list updates.
+content, seeded content retained through refresh, independently loading sections, and the
+placeholder-first stable-ID animation scenario. The `animated-reordering` screen also demonstrates
+post-mount hide/restore insertion, the explicit `animation: nil` opt-out, and sibling isolation.
+See [`SampleApp/README.md`](SampleApp/README.md) for the acceptance flow. UI tests verify final
+states; inspect that screen in Simulator to see motion.
 
 ## License
 
