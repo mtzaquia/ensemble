@@ -173,12 +173,10 @@ extension AsyncContentRendering {
 /// region, animate. A latest/retained source change with an unchanged successful value is the one
 /// lifecycle transition suppressed as source-only.
 func asyncContentShouldAnimate(
-    from previous: AsyncContentRenderingKind?,
+    from previous: AsyncContentRenderingKind,
     to next: AsyncContentRenderingKind,
     contentRevisionChanged: Bool
 ) -> Bool {
-    guard let previous else { return false }
-
     return switch (previous, next) {
     case (.hidden, .hidden), (.failure, .failure):
         false

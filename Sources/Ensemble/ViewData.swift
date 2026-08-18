@@ -237,7 +237,7 @@ public final class ViewData<Value> {
 
     var presentationRevision: ViewDataPresentationRevision {
         ViewDataPresentationRevision(
-            sourceID: presentation.animationValue.sourceID,
+            sourceID: presentation.contentRevision.sourceID,
             revision: presentation.revision
         )
     }

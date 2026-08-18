@@ -84,8 +84,8 @@ struct AsyncContentTests {
         }
     }
 
-    @Test("The animation overloads accept an animation or explicit nil")
-    func animationOverloadsCompose() {
+    @Test("The animation parameter accepts its default and explicit nil")
+    func animationParameterComposes() {
         let data = ViewData<Int>()
         let optionalData = ViewData<Int?>(42)
 
@@ -118,18 +118,21 @@ struct AsyncContentTests {
         let retained = AsyncContentRenderingKind.content(.retained)
         let placeholder = AsyncContentRenderingKind.content(.placeholder)
 
-        let cases: [(AsyncContentRenderingKind?, AsyncContentRenderingKind, Bool, Bool)] = [
-            (nil, latest, true, false),
+        let cases: [(AsyncContentRenderingKind, AsyncContentRenderingKind, Bool, Bool)] = [
+            (.hidden, .hidden, true, false),
             (.hidden, latest, true, true),
+            (.hidden, latest, false, true),
             (placeholder, latest, true, true),
+            (placeholder, latest, false, true),
+            (latest, placeholder, true, true),
             (latest, latest, true, true),
             (latest, retained, false, false),
             (retained, latest, false, false),
             (retained, latest, true, true),
             (latest, .failure, true, true),
             (.failure, latest, true, true),
+            (.failure, .failure, true, false),
             (latest, .hidden, true, true),
-            (.hidden, latest, true, true),
             (latest, latest, false, false),
             (retained, retained, true, true),
             (placeholder, placeholder, true, false),

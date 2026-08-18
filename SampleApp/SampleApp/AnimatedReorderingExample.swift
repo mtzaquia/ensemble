@@ -96,21 +96,12 @@ struct AnimatedReorderingExample: View {
 
     @ViewBuilder
     private var entriesPresentation: some View {
-        if animatesRows {
-            AsyncContent(
-                viewModel.entries,
-                loading: hidesRows ? .hidden : .placeholder(SampleEntry.placeholders)
-            ) { entries, source in
-                rowsSection(entries: entries, source: source)
-            }
-        } else {
-            AsyncContent(
-                viewModel.entries,
-                loading: hidesRows ? .hidden : .placeholder(SampleEntry.placeholders),
-                animation: nil
-            ) { entries, source in
-                rowsSection(entries: entries, source: source)
-            }
+        AsyncContent(
+            viewModel.entries,
+            loading: hidesRows ? .hidden : .placeholder(SampleEntry.placeholders),
+            animation: animatesRows ? .default : nil
+        ) { entries, source in
+            rowsSection(entries: entries, source: source)
         }
     }
 
