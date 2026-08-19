@@ -131,6 +131,87 @@ struct AsyncContentTests {
         #expect(try #require(updated.rendering.content).value == 2)
     }
 
+    @Test("Same-category updates display the incoming snapshot")
+    func sameCategoryUpdatesDisplayIncomingSnapshot() throws {
+        let committed = AsyncContentRendering.content([1, 2, 3], AsyncContentSource.latest)
+        let incoming = AsyncContentRendering.content([3, 1, 2], AsyncContentSource.latest)
+
+        let resolution = AsyncContentRenderingResolution(
+            incomingRendering: incoming,
+            committedRendering: committed,
+            transitionAnimation: .default
+        )
+
+        #expect(try #require(resolution.displayedRendering.content).value == [3, 1, 2])
+        #expect(resolution.transitionAnimation == nil)
+    }
+
+    @Test("Placeholder replacement supplies no local transition animation")
+    func placeholderReplacementIsUnanimated() throws {
+        let placeholder = AsyncContentRendering.content(0, AsyncContentSource.placeholder)
+        let latest = AsyncContentRendering.content(42, AsyncContentSource.latest)
+
+        let resolution = AsyncContentRenderingResolution(
+            incomingRendering: latest,
+            committedRendering: placeholder,
+            transitionAnimation: .default
+        )
+
+        let displayed = try #require(resolution.displayedRendering.content)
+        #expect(displayed.value == 42)
+        #expect(displayed.source == .latest)
+        #expect(resolution.transitionAnimation == nil)
+    }
+
+    @Test("Category changes retain the committed snapshot until transition commit")
+    func categoryChangesRetainCommittedSnapshot() throws {
+        let committed = AsyncContentRendering<Int>.hidden
+        let incoming = AsyncContentRendering.content(42, AsyncContentSource.latest)
+
+        let beforeCommit = AsyncContentRenderingResolution(
+            incomingRendering: incoming,
+            committedRendering: committed,
+            transitionAnimation: .default
+        )
+        #expect(beforeCommit.displayedRendering.isHidden)
+
+        let afterCommit = AsyncContentRenderingResolution(
+            incomingRendering: incoming,
+            committedRendering: incoming,
+            transitionAnimation: .default
+        )
+        #expect(try #require(afterCommit.displayedRendering.content).value == 42)
+    }
+
+    @Test("Transition animation is selected only for category changes")
+    func transitionAnimationSelection() {
+        let categories: [AsyncContentRenderingKind] = [.hidden, .content, .failure]
+
+        for previous in categories {
+            for next in categories {
+                let resolution = AsyncContentRenderingResolution(
+                    incomingRendering: rendering(for: next),
+                    committedRendering: rendering(for: previous),
+                    transitionAnimation: .default
+                )
+
+                #expect((resolution.transitionAnimation != nil) == (previous != next))
+            }
+        }
+    }
+
+    @Test("Nil configuration supplies no local transition animation")
+    func nilTransitionAnimation() {
+        let resolution = AsyncContentRenderingResolution(
+            incomingRendering: AsyncContentRendering.content(42, AsyncContentSource.latest),
+            committedRendering: AsyncContentRendering<Int>.hidden,
+            transitionAnimation: nil
+        )
+
+        #expect(resolution.displayedRendering.isHidden)
+        #expect(resolution.transitionAnimation == nil)
+    }
+
     @Test("Latest, retained, and placeholder presentations are all content")
     func successfulPresentationCategories() {
         let latest = AsyncContentRendering<Int>.content(1, .latest)
@@ -388,6 +469,19 @@ struct AsyncContentTests {
             Text("\(value)")
         } failure: { error, _ in
             Text(error.localizedDescription)
+        }
+    }
+
+    private func rendering(
+        for kind: AsyncContentRenderingKind
+    ) -> AsyncContentRendering<Int> {
+        switch kind {
+        case .hidden:
+            .hidden
+        case .content:
+            .content(42, .latest)
+        case .failure:
+            .failure(TestError.expected, nil)
         }
     }
 }

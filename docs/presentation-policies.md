@@ -118,15 +118,16 @@ Presentation replacement and successful-content changes have different owners.
 
 ### Animate presentation replacement
 
-`transitionAnimation` defaults to `.default` and applies after mount when the final rendered
-category changes between hidden, content, and failure. The initial category is never animated.
+`transitionAnimation` defaults to `.default`. `AsyncContent` explicitly applies it after mount when
+the final rendered category changes between hidden, content, and failure. The initial category is
+seeded without animation.
 
 Latest, retained, and placeholder values all belong to the content category. Changes such as
 placeholder-to-latest, latest-to-retained, and latest-A-to-latest-B therefore receive no
 Ensemble-originated animation. A reset that hides content and a later value that restores it are
 category changes and can animate.
 
-Pass `nil` to suppress animation when the rendered category changes:
+Pass `nil` when `AsyncContent` should supply no animation for rendered-category changes:
 
 ```swift
 AsyncContent(
@@ -137,11 +138,13 @@ AsyncContent(
 }
 ```
 
-For content-to-content replacement, `AsyncContent` renders the new presentation in the consumer's
-current transaction because the category remains stable. When the category changes,
-`transitionAnimation: nil` clears ambient animation for that presentation replacement. This keeps
-consumer-owned list updates animated without making hidden/content/failure replacement inherit an
-unrelated ancestor animation. `AsyncContent` does not configure a SwiftUI `.transition` modifier.
+For content-to-content replacement, `AsyncContent` renders the concrete incoming snapshot directly
+in the consumer's current transaction because the category remains stable. For a category change,
+it retains the previously displayed snapshot until it commits the incoming category, using
+`withAnimation` when `transitionAnimation` is non-`nil`. This keeps consumer-owned list updates
+atomic while restoring explicit insertion, removal, and replacement animation at the
+hidden/content/failure boundary. `AsyncContent` does not configure a SwiftUI `.transition`
+modifier.
 
 ### Animate successful content
 

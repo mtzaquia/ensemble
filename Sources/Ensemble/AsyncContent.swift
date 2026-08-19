@@ -139,14 +139,14 @@ extension AsyncContentRendering {
 /// apply only to the content produced by this instance, whether that content is a row, section, or
 /// larger region composed by the app.
 ///
-/// By default, ``AsyncContent`` seeds its initial rendering without animation, then supplies an
-/// animation when the rendered presentation category changes between hidden, successful content,
-/// and failure content. Latest, retained, and placeholder values share one content category, so
-/// successful-value replacement does not receive an Ensemble-originated animation.
+/// By default, ``AsyncContent`` seeds its initial rendering without animation, then explicitly
+/// animates post-mount changes between hidden, successful content, and failure content. Latest,
+/// retained, and placeholder values share one content category, so successful-value replacement
+/// does not receive an Ensemble-originated animation.
 ///
-/// Content-to-content replacement inherits the consumer's current transaction. Passing `nil` for
-/// `transitionAnimation` suppresses ambient animation when the rendered category changes, without
-/// affecting content-to-content updates where that category remains stable.
+/// Content-to-content replacement renders the incoming snapshot directly and inherits the
+/// consumer's current transaction. Passing `nil` for `transitionAnimation` supplies no local
+/// animation when the rendered category changes.
 ///
 /// This animation does not configure a SwiftUI transition modifier and cannot infer collection
 /// identity from the opaque content builder. Animate insertion, removal, reordering, and value
@@ -186,7 +186,7 @@ public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
     ///   - data: The presentation state to render.
     ///   - loading: The presentation used while `data` is empty or loading.
     ///   - transitionAnimation: The animation for post-mount changes between rendered categories,
-    ///     or `nil` to suppress ambient animation for those changes.
+    ///     or `nil` for no Ensemble-supplied animation.
     ///   - failure: The presentation used after `data` receives a failure.
     ///   - content: A builder receiving the rendered value and whether its source is latest,
     ///     retained, or a placeholder.
@@ -225,7 +225,7 @@ public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
     ///   - data: The presentation state to render.
     ///   - loading: The presentation used while `data` is empty or loading.
     ///   - transitionAnimation: The animation for post-mount changes between rendered categories,
-    ///     or `nil` to suppress ambient animation for those changes.
+    ///     or `nil` for no Ensemble-supplied animation.
     ///   - failure: The presentation used after `data` receives a failure.
     ///   - content: A builder receiving the rendered value and whether its source is latest,
     ///     retained, or a placeholder.
@@ -280,7 +280,7 @@ extension AsyncContent {
     ///   - data: The optional presentation state to render.
     ///   - loading: The presentation used while `data` is empty or loading.
     ///   - transitionAnimation: The animation for post-mount changes between rendered categories,
-    ///     or `nil` to suppress ambient animation for those changes.
+    ///     or `nil` for no Ensemble-supplied animation.
     ///   - failure: The presentation used after `data` receives a failure.
     ///   - content: A builder receiving the unwrapped value and whether its source is latest,
     ///     retained, or a placeholder.
@@ -316,7 +316,7 @@ extension AsyncContent {
     ///   - data: The optional presentation state to render.
     ///   - loading: The presentation used while `data` is empty or loading.
     ///   - transitionAnimation: The animation for post-mount changes between rendered categories,
-    ///     or `nil` to suppress ambient animation for those changes.
+    ///     or `nil` for no Ensemble-supplied animation.
     ///   - failure: The presentation used after `data` receives a failure.
     ///   - content: A builder receiving the unwrapped value and whether its source is latest,
     ///     retained, or a placeholder.
@@ -345,6 +345,27 @@ extension AsyncContent {
     }
 }
 
+struct AsyncContentRenderingResolution<Value> {
+    let displayedRendering: AsyncContentRendering<Value>
+    let transitionAnimation: Animation?
+
+    init(
+        incomingRendering: AsyncContentRendering<Value>,
+        committedRendering: AsyncContentRendering<Value>,
+        transitionAnimation: Animation?
+    ) {
+        if incomingRendering.kind == committedRendering.kind {
+            self.displayedRendering = incomingRendering
+            self.transitionAnimation = nil
+        } else {
+            self.displayedRendering = committedRendering
+            self.transitionAnimation = transitionAnimation
+        }
+    }
+}
+
+// Same-category snapshots remain attached to the parent's transaction. Category changes stay on
+// the previously committed snapshot until this renderer commits them in its own transaction.
 private struct AsyncContentRenderer<Value, Content: View, FailureContent: View>: View {
     let rendering: AsyncContentRendering<Value>
     // This concrete input distinguishes accepted presentation changes whose opaque rendering values
@@ -354,9 +375,32 @@ private struct AsyncContentRenderer<Value, Content: View, FailureContent: View>:
     let content: (Value, AsyncContentSource) -> Content
     let failureContent: (any Error, ViewDataRetryAction?) -> FailureContent
 
+    @State private var committedRendering: AsyncContentRendering<Value>
+
+    init(
+        rendering: AsyncContentRendering<Value>,
+        presentationRevision: ViewDataPresentationRevision,
+        transitionAnimation: Animation?,
+        content: @escaping (Value, AsyncContentSource) -> Content,
+        failureContent: @escaping (any Error, ViewDataRetryAction?) -> FailureContent
+    ) {
+        self.rendering = rendering
+        self.presentationRevision = presentationRevision
+        self.transitionAnimation = transitionAnimation
+        self.content = content
+        self.failureContent = failureContent
+        self._committedRendering = State(initialValue: rendering)
+    }
+
     var body: some View {
+        let resolution = AsyncContentRenderingResolution(
+            incomingRendering: rendering,
+            committedRendering: committedRendering,
+            transitionAnimation: transitionAnimation
+        )
+
         Group {
-            switch rendering {
+            switch resolution.displayedRendering {
             case .hidden:
                 EmptyView()
             case .content(let value, let source):
@@ -365,7 +409,15 @@ private struct AsyncContentRenderer<Value, Content: View, FailureContent: View>:
                 failureContent(error, retryAction)
             }
         }
-        .animation(transitionAnimation, value: rendering.kind)
+        .onChange(of: presentationRevision) {
+            if let animation = resolution.transitionAnimation {
+                withAnimation(animation) {
+                    committedRendering = rendering
+                }
+            } else {
+                committedRendering = rendering
+            }
+        }
     }
 }
 

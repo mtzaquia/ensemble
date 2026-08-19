@@ -121,7 +121,6 @@ public final class ViewDataContext {
     where
         SourceError: Error,
         Source: AsyncSequence,
-        Source.AsyncIterator: Sendable,
         Source.Element == Result<Value, SourceError>
     {
         bind(makeSource, to: destination, reload: reload) { result, sink in
@@ -153,7 +152,7 @@ public final class ViewDataContext {
             _ element: Source.Element,
             _ sink: ViewDataSink<Value>
         ) -> Void
-    ) where Source: AsyncSequence, Source.AsyncIterator: Sendable {
+    ) where Source: AsyncSequence {
         bindSource(makeSource, to: destination, reload: reload, receive: receive)
     }
 
@@ -209,7 +208,7 @@ private extension ViewDataContext {
             _ element: Source.Element,
             _ sink: ViewDataSink<Value>
         ) -> Void
-    ) where Source: AsyncSequence, Source.AsyncIterator: Sendable {
+    ) where Source: AsyncSequence {
         let identifier = ObjectIdentifier(destination)
         removeRegistration(identifier)
         ensembleLog.ensembleDebug(
@@ -252,7 +251,7 @@ private extension ViewDataContext {
             _ element: Source.Element,
             _ sink: ViewDataSink<Value>
         ) -> Void
-    ) where Source: AsyncSequence, Source.AsyncIterator: Sendable {
+    ) where Source: AsyncSequence {
         let sink = makeSink(
             destination: destination,
             identifier: identifier,
@@ -297,7 +296,7 @@ private extension ViewDataContext {
             _ element: Source.Element,
             _ sink: ViewDataSink<Value>
         ) -> Void
-    ) -> ViewDataRetryAction? where Source: AsyncSequence, Source.AsyncIterator: Sendable {
+    ) -> ViewDataRetryAction? where Source: AsyncSequence {
         switch behavior {
         case .resubscribe:
             ViewDataRetryAction { [weak self, weak destination, weak registration] in

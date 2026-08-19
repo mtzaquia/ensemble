@@ -28,7 +28,7 @@ The `animated-reordering` scenario is the direct animation acceptance path:
 4. Hide and restore the section to see post-mount presentation removal and insertion controlled by
    `transitionAnimation`.
 5. Toggle list animation and presentation animation independently, including the
-   `transitionAnimation: nil` branch that suppresses category replacement animation.
+   `transitionAnimation: nil` branch that supplies no local category-transition animation.
 
 The source badge, stable row identifiers, inserted and removed rows, changed row detail, and action
 text make each ownership boundary legible. The same ambient-transaction approach works when the
