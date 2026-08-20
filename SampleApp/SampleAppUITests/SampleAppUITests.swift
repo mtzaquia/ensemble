@@ -84,6 +84,14 @@ nonisolated final class SampleAppUITests: XCTestCase {
         XCTAssertTrue(retry.waitForExistence(timeout: 2))
         retry.tap()
 
+        XCTAssertFalse(
+            element(A11y.entry(0)).waitForExistence(timeout: 0.4),
+            "Placeholder content replaced the failure while retrying"
+        )
+        XCTAssertTrue(
+            element(A11y.screenReplacementFailure).exists,
+            "Failure content disappeared before the retry produced a result"
+        )
         XCTAssertTrue(element(A11y.entry(30)).waitForExistence(timeout: 3))
         XCTAssertFalse(element(A11y.screenReplacementFailure).exists)
     }

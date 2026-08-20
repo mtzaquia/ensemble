@@ -437,25 +437,56 @@ struct AsyncContentTests {
         #expect(subsequentError == .subsequent)
     }
 
-    @Test("A placeholder replaces a failure while retrying")
-    func placeholderReplacesRetryingFailure() throws {
+    @Test("Retry keeps failure content ahead of a placeholder until the next result")
+    func retryKeepsFailureAheadOfPlaceholder() async throws {
+        var continuations: [AsyncStream<Result<Int, TestError>>.Continuation] = []
         let data = ViewData<Int>()
-        data.fail(TestError.expected)
-        data.beginLoading()
+        let context = ViewDataContext()
 
-        let content = AsyncContent(
-            data,
-            loading: .placeholder(10),
-            failure: .failureContent
-        ) { value, _ in
-            Text("\(value)")
-        } failure: { error, _ in
-            Text(error.localizedDescription)
-        }
+        context.bind({
+            let (stream, continuation) = AsyncStream<Result<Int, TestError>>.makeStream()
+            continuations.append(continuation)
+            return stream
+        }, to: data)
 
-        let presentation = try #require(content.rendering.content)
-        #expect(presentation.value == 10)
-        #expect(presentation.source == .placeholder)
+        continuations[0].yield(.failure(.expected))
+        #expect(await eventually { data.phase.kind == .failure })
+
+        let initialFailure = try #require(placeholderLoadingContent(data).rendering.failure)
+        #expect(initialFailure.error as? TestError == .expected)
+
+        let firstRetry = try #require(initialFailure.retryAction)
+        firstRetry()
+        #expect(await eventually { continuations.count == 2 && data.phase.kind == .loading })
+
+        let firstRetryingFailure = try #require(
+            placeholderLoadingContent(data).rendering.failure
+        )
+        #expect(firstRetryingFailure.error as? TestError == .expected)
+
+        continuations[1].yield(.failure(.subsequent))
+        #expect(await eventually { data.phase.kind == .failure })
+
+        let subsequentFailure = try #require(placeholderLoadingContent(data).rendering.failure)
+        #expect(subsequentFailure.error as? TestError == .subsequent)
+
+        let secondRetry = try #require(subsequentFailure.retryAction)
+        secondRetry()
+        #expect(await eventually { continuations.count == 3 && data.phase.kind == .loading })
+
+        let secondRetryingFailure = try #require(
+            placeholderLoadingContent(data).rendering.failure
+        )
+        #expect(secondRetryingFailure.error as? TestError == .subsequent)
+
+        continuations[2].yield(.success(42))
+        #expect(await eventually { data.phase.kind == .success })
+
+        let success = try #require(placeholderLoadingContent(data).rendering.content)
+        #expect(success.value == 42)
+        #expect(success.source == .latest)
+
+        continuations[2].finish()
     }
 
     private func hiddenLoadingContent(
@@ -464,6 +495,20 @@ struct AsyncContentTests {
         AsyncContent(
             data,
             loading: .hidden,
+            failure: .failureContent
+        ) { value, _ in
+            Text("\(value)")
+        } failure: { error, _ in
+            Text(error.localizedDescription)
+        }
+    }
+
+    private func placeholderLoadingContent(
+        _ data: ViewData<Int>
+    ) -> AsyncContent<Int, Text, Text> {
+        AsyncContent(
+            data,
+            loading: .placeholder(10),
             failure: .failureContent
         ) { value, _ in
             Text("\(value)")
@@ -484,6 +529,14 @@ struct AsyncContentTests {
             .failure(TestError.expected, nil)
         }
     }
+}
+
+private func eventually(_ predicate: () -> Bool) async -> Bool {
+    for _ in 0..<100 {
+        if predicate() { return true }
+        await Task.yield()
+    }
+    return false
 }
 
 private extension AsyncContentRendering {

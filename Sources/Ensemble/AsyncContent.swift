@@ -37,11 +37,11 @@ public enum AsyncContentSource: Hashable, Sendable {
 
 /// Controls what ``AsyncContent`` renders before a successful value exists and while its data is
 /// loading.
+///
+/// When retry begins from visible failure content, that failure remains visible until the
+/// destination receives another result. The loading presentation does not replace it in between.
 public enum AsyncContentLoadingPolicy<Value> {
     /// Renders no successful or placeholder content while the data is empty or loading.
-    ///
-    /// When loading begins from a presented failure, that failure remains visible until the
-    /// destination receives another result.
     case hidden
 
     /// Renders the retained successful value when one exists, and otherwise renders no content.
@@ -180,7 +180,8 @@ public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
     ///
     /// The failure builder runs for ``AsyncContentFailurePolicy/failureContent`` and for
     /// ``AsyncContentFailurePolicy/retained`` when no retained successful value exists. It does not
-    /// run when the retained policy can render that value.
+    /// run when the retained policy can render that value. Invoking its retry action keeps the
+    /// presented failure visible until the destination receives another success or failure.
     ///
     /// - Parameters:
     ///   - data: The presentation state to render.
@@ -440,12 +441,12 @@ private extension ViewData {
                 .map { .content($0.value, $0.source) }
                 ?? .hidden
         case .loading:
-            loadingPolicy.presentation(retained: projectedLatest)
-                .map { .content($0.value, $0.source) }
-                ?? loadingFailureRendering(
-                    failureRendering: failureRendering,
-                    hasProjectedLatest: projectedLatest != nil
-                )
+            loadingFailureRendering(
+                failureRendering: failureRendering,
+                hasProjectedLatest: projectedLatest != nil
+            )
+                ?? loadingPolicy.presentation(retained: projectedLatest)
+                    .map { .content($0.value, $0.source) }
                 ?? .hidden
         case .success:
             projectedLatest.map { .content($0, .latest) } ?? .hidden

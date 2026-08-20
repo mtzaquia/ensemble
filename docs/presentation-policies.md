@@ -41,7 +41,8 @@ AsyncContent(
 
 The loading policy applies before a source starts, so a placeholder participates in the first
 layout pass. When retry begins from visible failure content, that failure stays visible until the
-loading policy can provide retained or placeholder content, or the source produces another result.
+source produces another success or failure. Retained or placeholder loading content does not
+replace the failure in between.
 
 ### Choose failure behavior
 
