@@ -166,7 +166,12 @@ public final class ViewDataContext {
     ///
     /// - Parameter destination: The presentation state whose source should reload.
     public func reload<Value>(_ destination: ViewData<Value>) {
-        registrations[ObjectIdentifier(destination)]?.reloadAction?()
+        let identifier = ObjectIdentifier(destination)
+        guard let registration = registrations[identifier] else {
+            ensembleLog.ensembleDebug(.reloadIgnored(destination: identifier))
+            return
+        }
+        registration.reloadAction?()
     }
 
     /// Cancels and removes the binding for a destination.
