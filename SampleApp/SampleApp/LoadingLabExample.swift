@@ -28,6 +28,8 @@ struct LoadingLabExample: View {
     @State private var viewModel = LoadingLabViewModel()
 
     var body: some View {
+        @Bindable var viewModel = viewModel
+
         List {
             Section {
                 AsyncContent(
@@ -64,10 +66,7 @@ struct LoadingLabExample: View {
 
                     Picker(
                         "Request state",
-                        selection: Binding(
-                            get: { viewModel.requestStage },
-                            set: { viewModel.select($0) }
-                        )
+                        selection: $viewModel.selectedStage
                     ) {
                         ForEach(LoadingLabRequestStage.allCases) { stage in
                             Text(stage.title)
@@ -93,18 +92,12 @@ struct LoadingLabExample: View {
 
                 Toggle(
                     "Fail when complete",
-                    isOn: Binding(
-                        get: { viewModel.shouldFail },
-                        set: { viewModel.setShouldFail($0) }
-                    )
+                    isOn: $viewModel.failsWhenComplete
                 )
 
                 Toggle(
                     "Return no content",
-                    isOn: Binding(
-                        get: { viewModel.shouldReturnNoContent },
-                        set: { viewModel.setShouldReturnNoContent($0) }
-                    )
+                    isOn: $viewModel.returnsNoContent
                 )
                 .accessibilityIdentifier(SampleAppAccessibility.loadingLabNoContent)
 
@@ -235,6 +228,21 @@ private final class LoadingLabViewModel {
     @ObservationIgnored private var hasStarted = false
     @ObservationIgnored private var nextEventID = 0
     @ObservationIgnored private var requestIsActive = false
+
+    var selectedStage: LoadingLabRequestStage {
+        get { requestStage }
+        set { select(newValue) }
+    }
+
+    var failsWhenComplete: Bool {
+        get { shouldFail }
+        set { setShouldFail(newValue) }
+    }
+
+    var returnsNoContent: Bool {
+        get { shouldReturnNoContent }
+        set { setShouldReturnNoContent(newValue) }
+    }
 
     var hasRetainedValue: Bool {
         retainedEntries != nil

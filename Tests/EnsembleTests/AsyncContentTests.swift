@@ -20,6 +20,7 @@
 //  SOFTWARE.
 //
 
+import Observation
 import SwiftUI
 import Testing
 @testable import Ensemble
@@ -115,20 +116,49 @@ struct AsyncContentTests {
         }
     }
 
-    @Test("Each AsyncContent value captures one presentation snapshot")
-    func capturesPresentationSnapshot() throws {
+    @Test("Constructing AsyncContent does not observe presentation state")
+    func constructionDoesNotObservePresentation() {
         let data = ViewData(1)
-        let original = AsyncContent(data) { value, _ in
+        let observation = ObservationCounter()
+
+        observation.track {
+            _ = AsyncContent(data) { value, _ in
+                Text("\(value)")
+            }
+        }
+
+        data.reset()
+
+        #expect(observation.cycles == 0)
+    }
+
+    @Test("AsyncContent body observes presentation state")
+    func bodyObservesPresentation() {
+        let data = ViewData(1)
+        let content = AsyncContent(data) { value, _ in
+            Text("\(value)")
+        }
+        let observation = ObservationCounter()
+
+        observation.track {
+            _ = content.body
+        }
+
+        data.reset()
+
+        #expect(observation.cycles == 1)
+    }
+
+    @Test("AsyncContent resolves the current presentation")
+    func resolvesCurrentPresentation() throws {
+        let data = ViewData(1)
+        let content = AsyncContent(data) { value, _ in
             Text("\(value)")
         }
 
         data.set(2)
 
-        let updated = AsyncContent(data) { value, _ in
-            Text("\(value)")
-        }
-        #expect(try #require(original.rendering.content).value == 1)
-        #expect(try #require(updated.rendering.content).value == 2)
+        #expect(try #require(content.rendering.content).value == 2)
     }
 
     @Test("Same-category updates display the incoming snapshot")
@@ -257,23 +287,20 @@ struct AsyncContentTests {
     func retryChangesUpdateBuilderInput() {
         let data = ViewData<Int>()
         data.fail(TestError.expected)
-        let withoutRetry = AsyncContent(data) { value, _ in
+        let content = AsyncContent(data) { value, _ in
             Text("\(value)")
         } failure: { error, retry in
             Button(error.localizedDescription) { retry?() }
         }
+        let withoutRetry = content.rendering
 
         data.installRetryAction(ViewDataRetryAction {})
 
-        let withRetry = AsyncContent(data) { value, _ in
-            Text("\(value)")
-        } failure: { error, retry in
-            Button(error.localizedDescription) { retry?() }
-        }
-        #expect(withoutRetry.rendering.failure?.retryAction == nil)
-        #expect(withRetry.rendering.failure?.retryAction != nil)
-        #expect(withoutRetry.rendering.kind == .failure)
-        #expect(withRetry.rendering.kind == .failure)
+        let withRetry = content.rendering
+        #expect(withoutRetry.failure?.retryAction == nil)
+        #expect(withRetry.failure?.retryAction != nil)
+        #expect(withoutRetry.kind == .failure)
+        #expect(withRetry.kind == .failure)
     }
 
     @Test("Unwrapping renders a non-optional latest value")
@@ -537,6 +564,21 @@ private func eventually(_ predicate: () -> Bool) async -> Bool {
         await Task.yield()
     }
     return false
+}
+
+@MainActor
+private final class ObservationCounter {
+    private(set) var cycles = 0
+
+    func track(_ apply: () -> Void) {
+        withObservationTracking {
+            apply()
+        } onChange: { [weak self] in
+            MainActor.assumeIsolated {
+                self?.cycles += 1
+            }
+        }
+    }
 }
 
 private extension AsyncContentRendering {

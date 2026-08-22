@@ -133,6 +133,42 @@ extension AsyncContentRendering {
     }
 }
 
+private enum AsyncContentData<Value> {
+    case value(ViewData<Value>)
+    case optionalValue(ViewData<Value?>)
+
+    func presentation(
+        loadingPolicy: AsyncContentLoadingPolicy<Value>,
+        failureRendering: AsyncContentFailureRendering
+    ) -> AsyncContentPresentation<Value> {
+        switch self {
+        case .value(let data):
+            AsyncContentPresentation(
+                rendering: data.asyncContentRendering(
+                    loadingPolicy: loadingPolicy,
+                    failureRendering: failureRendering,
+                    project: { .some($0) }
+                ),
+                revision: data.presentationRevision
+            )
+        case .optionalValue(let data):
+            AsyncContentPresentation(
+                rendering: data.asyncContentRendering(
+                    loadingPolicy: loadingPolicy,
+                    failureRendering: failureRendering,
+                    project: { $0 }
+                ),
+                revision: data.presentationRevision
+            )
+        }
+    }
+}
+
+private struct AsyncContentPresentation<Value> {
+    let rendering: AsyncContentRendering<Value>
+    let revision: ViewDataPresentationRevision
+}
+
 /// Renders a ``ViewData`` value according to view-local loading and failure policies.
 ///
 /// `AsyncContent` does not impose a list, section, stack, or other layout container. Its policies
@@ -156,17 +192,23 @@ extension AsyncContentRendering {
 /// no content, start an initial binding from a stable ancestor rather than a `.task` modifier
 /// attached directly to the empty `AsyncContent` value.
 public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
-    private let renderingSnapshot: AsyncContentRendering<Value>
-    private let presentationRevision: ViewDataPresentationRevision
+    private let data: AsyncContentData<Value>
+    private let loadingPolicy: AsyncContentLoadingPolicy<Value>
+    private let failureRendering: AsyncContentFailureRendering
     private let transitionAnimation: Animation?
     private let content: (Value, AsyncContentSource) -> Content
     private let failureContent: (any Error, ViewDataRetryAction?) -> FailureContent
 
     @ViewBuilder
     public var body: some View {
+        let presentation = data.presentation(
+            loadingPolicy: loadingPolicy,
+            failureRendering: failureRendering
+        )
+
         AsyncContentRenderer(
-            rendering: renderingSnapshot,
-            presentationRevision: presentationRevision,
+            rendering: presentation.rendering,
+            presentationRevision: presentation.revision,
             transitionAnimation: transitionAnimation,
             content: content,
             failureContent: failureContent
@@ -202,11 +244,10 @@ public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
         @ViewBuilder failure failureContent: @escaping (any Error, ViewDataRetryAction?) -> FailureContent
     ) {
         self.init(
-            data: data,
+            data: .value(data),
             loading: loading,
             failureRendering: AsyncContentFailureRendering(failure),
             transitionAnimation: transitionAnimation,
-            project: { .some($0) },
             content: content,
             failureContent: failureContent
         )
@@ -238,31 +279,26 @@ public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
         @ViewBuilder content: @escaping (Value, AsyncContentSource) -> Content
     ) where FailureContent == EmptyView {
         self.init(
-            data: data,
+            data: .value(data),
             loading: loading,
             failureRendering: AsyncContentFailureRendering(failure),
             transitionAnimation: transitionAnimation,
-            project: { .some($0) },
             content: content,
             failureContent: { _, _ in EmptyView() }
         )
     }
 
-    private init<SourceValue>(
-        data: ViewData<SourceValue>,
+    private init(
+        data: AsyncContentData<Value>,
         loading: AsyncContentLoadingPolicy<Value>,
         failureRendering: AsyncContentFailureRendering,
         transitionAnimation: Animation?,
-        project: (SourceValue) -> Value?,
         content: @escaping (Value, AsyncContentSource) -> Content,
         failureContent: @escaping (any Error, ViewDataRetryAction?) -> FailureContent
     ) {
-        self.renderingSnapshot = data.asyncContentRendering(
-            loadingPolicy: loading,
-            failureRendering: failureRendering,
-            project: project
-        )
-        self.presentationRevision = data.presentationRevision
+        self.data = data
+        self.loadingPolicy = loading
+        self.failureRendering = failureRendering
         self.transitionAnimation = transitionAnimation
         self.content = content
         self.failureContent = failureContent
@@ -296,11 +332,10 @@ extension AsyncContent {
         @ViewBuilder failure failureContent: @escaping (any Error, ViewDataRetryAction?) -> FailureContent
     ) {
         self.init(
-            data: data,
+            data: .optionalValue(data),
             loading: loading,
             failureRendering: AsyncContentFailureRendering(failure),
             transitionAnimation: transitionAnimation,
-            project: { $0 },
             content: content,
             failureContent: failureContent
         )
@@ -329,11 +364,10 @@ extension AsyncContent {
         @ViewBuilder content: @escaping (Value, AsyncContentSource) -> Content
     ) where FailureContent == EmptyView {
         self.init(
-            data: data,
+            data: .optionalValue(data),
             loading: loading,
             failureRendering: AsyncContentFailureRendering(failure),
             transitionAnimation: transitionAnimation,
-            project: { $0 },
             content: content,
             failureContent: { _, _ in EmptyView() }
         )
@@ -342,7 +376,10 @@ extension AsyncContent {
 
 extension AsyncContent {
     var rendering: AsyncContentRendering<Value> {
-        renderingSnapshot
+        data.presentation(
+            loadingPolicy: loadingPolicy,
+            failureRendering: failureRendering
+        ).rendering
     }
 }
 
