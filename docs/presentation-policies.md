@@ -141,11 +141,11 @@ AsyncContent(
 
 For content-to-content replacement, `AsyncContent` renders the concrete incoming snapshot directly
 in the consumer's current transaction because the category remains stable. For a category change,
-it retains the previously displayed snapshot until it commits the incoming category, using
-`withAnimation` when `transitionAnimation` is non-`nil`. This keeps consumer-owned list updates
-atomic while restoring explicit insertion, removal, and replacement animation at the
+it replaces that update's transaction animation when `transitionAnimation` is non-`nil`. Passing
+`nil` leaves an inherited consumer animation unchanged. This keeps consumer-owned list updates
+atomic while adding insertion, removal, and replacement animation only at the
 hidden/content/failure boundary. `AsyncContent` does not configure a SwiftUI `.transition`
-modifier.
+modifier or mirror presentation changes through view-local state.
 
 ### Animate successful content
 
