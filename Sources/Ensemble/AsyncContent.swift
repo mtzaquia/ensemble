@@ -383,27 +383,16 @@ extension AsyncContent {
     }
 }
 
-struct AsyncContentRenderingResolution<Value> {
-    let displayedRendering: AsyncContentRendering<Value>
-    let transitionAnimation: Animation?
-
-    init(
-        incomingRendering: AsyncContentRendering<Value>,
-        committedRendering: AsyncContentRendering<Value>,
-        transitionAnimation: Animation?
-    ) {
-        if incomingRendering.kind == committedRendering.kind {
-            self.displayedRendering = incomingRendering
-            self.transitionAnimation = nil
-        } else {
-            self.displayedRendering = committedRendering
-            self.transitionAnimation = transitionAnimation
-        }
-    }
+func applyAsyncContentTransitionAnimation(
+    _ transitionAnimation: Animation?,
+    to transaction: inout Transaction
+) {
+    guard let transitionAnimation else { return }
+    transaction.animation = transitionAnimation
 }
 
-// Same-category snapshots remain attached to the parent's transaction. Category changes stay on
-// the previously committed snapshot until this renderer commits them in its own transaction.
+// Same-category snapshots remain attached to the parent's transaction. Category changes replace
+// the animation on that update's transaction without mirroring the rendering through local state.
 private struct AsyncContentRenderer<Value, Content: View, FailureContent: View>: View {
     let rendering: AsyncContentRendering<Value>
     // This concrete input distinguishes accepted presentation changes whose opaque rendering values
@@ -413,32 +402,9 @@ private struct AsyncContentRenderer<Value, Content: View, FailureContent: View>:
     let content: (Value, AsyncContentSource) -> Content
     let failureContent: (any Error, ViewDataRetryAction?) -> FailureContent
 
-    @State private var committedRendering: AsyncContentRendering<Value>
-
-    init(
-        rendering: AsyncContentRendering<Value>,
-        presentationRevision: ViewDataPresentationRevision,
-        transitionAnimation: Animation?,
-        content: @escaping (Value, AsyncContentSource) -> Content,
-        failureContent: @escaping (any Error, ViewDataRetryAction?) -> FailureContent
-    ) {
-        self.rendering = rendering
-        self.presentationRevision = presentationRevision
-        self.transitionAnimation = transitionAnimation
-        self.content = content
-        self.failureContent = failureContent
-        self._committedRendering = State(initialValue: rendering)
-    }
-
     var body: some View {
-        let resolution = AsyncContentRenderingResolution(
-            incomingRendering: rendering,
-            committedRendering: committedRendering,
-            transitionAnimation: transitionAnimation
-        )
-
         Group {
-            switch resolution.displayedRendering {
+            switch rendering {
             case .hidden:
                 EmptyView()
             case .content(let value, let source):
@@ -447,14 +413,8 @@ private struct AsyncContentRenderer<Value, Content: View, FailureContent: View>:
                 failureContent(error, retryAction)
             }
         }
-        .onChange(of: presentationRevision) {
-            if let animation = resolution.transitionAnimation {
-                withAnimation(animation) {
-                    committedRendering = rendering
-                }
-            } else {
-                committedRendering = rendering
-            }
+        .transaction(value: rendering.kind) { transaction in
+            applyAsyncContentTransitionAnimation(transitionAnimation, to: &transaction)
         }
     }
 }
