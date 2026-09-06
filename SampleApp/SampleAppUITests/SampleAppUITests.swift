@@ -75,6 +75,40 @@ nonisolated final class SampleAppUITests: XCTestCase {
     }
 
     @MainActor
+    func testLoadingLabRetryDoesNotClaimToRenderPlaceholders() {
+        launch(.loadingLab)
+        XCTAssertTrue(element(A11y.entry(10)).waitForExistence(timeout: 3))
+
+        let deleteCache = app.buttons[A11y.loadingLabDeleteCache]
+        scrollUntilHittable(deleteCache, direction: .up)
+        deleteCache.tap()
+
+        let failureToggle = app.switches[A11y.loadingLabFailsWhenComplete].switches.firstMatch
+        scrollUntilHittable(failureToggle, direction: .down)
+        failureToggle.tap()
+        XCTAssertEqual(failureToggle.value as? String, "1")
+
+        let requestStage = app.segmentedControls[A11y.loadingLabStage]
+        scrollUntilHittable(requestStage, direction: .down)
+        requestStage.buttons["Finished"].tap()
+        let failure = app.staticTexts.matching(identifier: A11y.loadingLabFailure).firstMatch
+        XCTAssertTrue(failure.waitForExistence(timeout: 3))
+
+        requestStage.buttons["In-flight"].tap()
+        XCTAssertTrue(waitForLabelContaining(
+            "previously visible failure remains",
+            on: element(A11y.loadingLabPhase)
+        ))
+        XCTAssertTrue(failure.exists)
+        XCTAssertFalse(element(A11y.placeholderSource).exists)
+        XCTAssertFalse(element(A11y.entry(0)).exists)
+
+        requestStage.buttons["Idle"].tap()
+        XCTAssertTrue(element(A11y.placeholderSource).waitForExistence(timeout: 2))
+        XCTAssertTrue(element(A11y.entry(0)).exists)
+    }
+
+    @MainActor
     func testScreenReplacementRetriesWithFreshSource() {
         launch(.screenReplacement)
 
@@ -275,6 +309,10 @@ private enum A11y {
     static let loadingLabStage = "sample.loading-lab.stage"
     static let loadingLabDeleteCache = "sample.loading-lab.delete-cache"
     static let loadingLabNoContent = "sample.loading-lab.no-content"
+    static let loadingLabFailure = "sample.loading-lab.failure"
+    static let loadingLabFailsWhenComplete = "sample.loading-lab.fails-when-complete"
+    static let loadingLabPhase = "sample.loading-lab.phase"
+    static let placeholderSource = "sample.source.placeholder"
 
     static let screenReplacementFailure = "sample.screen-replacement.failure"
     static let screenReplacementRetry = "sample.screen-replacement.retry"

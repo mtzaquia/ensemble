@@ -83,7 +83,7 @@ final class EntriesViewModel {
   }
 
   func start() {
-    context.bind({ useCase.values() }, to: entries)
+    context.bind({ [useCase] in useCase.values() }, to: entries)
   }
 }
 ```

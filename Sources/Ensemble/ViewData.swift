@@ -176,6 +176,10 @@ public final class ViewData<Value> {
     @ObservationIgnored private var nextLoadingToken: UInt = 0
     @ObservationIgnored private var currentLoadingToken: UInt?
 
+    // Binding ownership is independent of observable presentation and must not retain its context.
+    @ObservationIgnored weak var bindingContext: ViewDataContext?
+    @ObservationIgnored var bindingID: UUID?
+
     /// Creates empty presentation state.
     public init() {
         self.presentation = Presentation(

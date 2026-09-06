@@ -23,7 +23,7 @@ final class EntriesViewModel {
   }
 
   func start() {
-    context.bind({ useCase.values() }, to: entries)
+    context.bind({ [useCase] in useCase.values() }, to: entries)
   }
 
   func reload() {
@@ -39,6 +39,9 @@ context is released. Success replaces `latestValue`; failure preserves it.
 The source factory runs synchronously and must return promptly. Networking, observation, and other
 work belong to the sequence producer.
 
+Capture the source directly, as above, so the retained factory does not retain the view model that
+owns the context. Use the same capture pattern for an escaping refresh action.
+
 ## Match reload to the source
 
 The default `.resubscribe` behavior replaces a cold, request-per-subscription sequence. A hot
@@ -46,9 +49,9 @@ source instead needs an action that publishes through its existing subscription:
 
 ```swift
 context.bind(
-  { useCase.values() },
+  { [useCase] in useCase.values() },
   to: entries,
-  reload: .refresh { useCase.refresh() }
+  reload: .refresh { [useCase] in useCase.refresh() }
 )
 ```
 

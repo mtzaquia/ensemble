@@ -52,12 +52,18 @@ struct LoadingLabExample: View {
                 HStack {
                     Text("Response")
                     Spacer()
-                    if let source = viewModel.renderedSource {
+                    AsyncContent(
+                        unwrapping: viewModel.entries,
+                        loading: .placeholder(SampleEntry.placeholders),
+                        transitionAnimation: nil,
+                        failure: .retained
+                    ) { _, source in
                         SampleSourceBadge(source: source)
                     }
                 }
             } footer: {
                 Text(viewModel.phaseDescription)
+                    .accessibilityIdentifier(SampleAppAccessibility.loadingLabPhase)
             }
 
             Section("Loading controls") {
@@ -94,6 +100,7 @@ struct LoadingLabExample: View {
                     "Fail when complete",
                     isOn: $viewModel.failsWhenComplete
                 )
+                .accessibilityIdentifier(SampleAppAccessibility.loadingLabFailsWhenComplete)
 
                 Toggle(
                     "Return no content",
@@ -248,27 +255,12 @@ private final class LoadingLabViewModel {
         retainedEntries != nil
     }
 
-    var renderedSource: AsyncContentSource? {
-        switch entries.phase {
-        case .loading:
-            retainedEntries == nil ? .placeholder : .retained
-        case .empty:
-            .placeholder
-        case .success:
-            retainedEntries == nil ? nil : .latest
-        case .failure:
-            retainedEntries == nil ? nil : .retained
-        }
-    }
-
     var phaseDescription: String {
         switch entries.phase {
         case .empty:
             "No successful response is retained, so the placeholder rows are visible."
         case .loading:
-            retainedEntries == nil
-                ? "No retained value is available, so the placeholder rows are visible."
-                : "The retained response stays visible while the next request is in flight."
+            "Waiting for the next result. A previously visible failure remains on screen."
         case .success:
             retainedEntries == nil
                 ? "The request succeeded with no content, so unwrapping omitted the response."
@@ -420,15 +412,12 @@ private final class LoadingLabViewModel {
     }
 
     private func beginRequest() {
-        let hadRetainedValue = retainedEntries != nil
         requestIsActive = true
         requestStage = .inFlight
         context.reload(entries)
         record(
             title: "Request started",
-            detail: hadRetainedValue
-                ? "The retained rows remain visible while the request is in flight."
-                : "No retained value is available, so placeholder rows are visible.",
+            detail: "Waiting for the next result. A previously visible failure remains on screen.",
             systemImage: "arrow.trianglehead.2.clockwise"
         )
     }

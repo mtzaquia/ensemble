@@ -118,6 +118,8 @@ enum SampleAppAccessibility {
     static let loadingLabDeleteCache = "sample.loading-lab.delete-cache"
     static let loadingLabRestoreCache = "sample.loading-lab.restore-cache"
     static let loadingLabFailure = "sample.loading-lab.failure"
+    static let loadingLabFailsWhenComplete = "sample.loading-lab.fails-when-complete"
+    static let loadingLabPhase = "sample.loading-lab.phase"
     static let loadingLabHistory = "sample.loading-lab.history"
     static let loadingLabClearHistory = "sample.loading-lab.history.clear"
 

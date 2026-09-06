@@ -361,6 +361,36 @@ struct ViewDataTests {
         #expect(await eventually { data.isFailed })
     }
 
+    @Test("Source cancellation settles loading and permits refresh", arguments: [
+        ViewData<Int>.Phase.Kind.empty, .success, .failure,
+    ])
+    func sourceCancellationCanRefresh(initialState: ViewData<Int>.Phase.Kind) async {
+        let data = ViewData<Int>()
+        if initialState == .success { data.set(41) }
+        if initialState == .failure { data.fail(TestError.expected) }
+        let context = ViewDataContext()
+        var continuations: [AsyncThrowingStream<Result<Int, TestError>, any Error>.Continuation] = []
+
+        context.bind({
+            let (stream, continuation) =
+                AsyncThrowingStream<Result<Int, TestError>, any Error>.makeStream()
+            continuations.append(continuation)
+            return stream
+        }, to: data, reload: .refresh {
+            continuations.last?.yield(.success(42))
+        })
+
+        continuations[0].finish(throwing: CancellationError())
+        #expect(await eventually { data.phase.kind == initialState })
+        #expect(data.latestValue == (initialState == .success ? .available(41) : .unavailable))
+
+        context.reload(data)
+        #expect(continuations.count == 2)
+        #expect(data.isLoading)
+        #expect(await eventually { data.latestValue == .available(42) && data.isSuccessful })
+        continuations.last?.finish()
+    }
+
     @Test("Custom element handling can reset without ending the binding")
     func customElementsResetPresentation() async {
         let (stream, continuation) =
@@ -422,6 +452,105 @@ struct ViewDataTests {
 
         firstContinuation.finish()
         secondContinuation.finish()
+    }
+
+    @Test("Rebinding through another context transfers subscription and retry ownership")
+    func bindingTransfersBetweenContexts() async throws {
+        let data = ViewData<Int>()
+        var first: ViewDataContext? = ViewDataContext()
+        weak var weakFirst: ViewDataContext?
+        weakFirst = first
+        let second = ViewDataContext()
+        let (firstStream, firstContinuation) = AsyncStream<TestUpdate>.makeStream()
+        var firstSourceCount = 0
+        var retainedSink: ViewDataSink<Int>?
+
+        first?.bind({
+            firstSourceCount += 1
+            return firstStream
+        }, to: data) { _, sink in
+            retainedSink = sink
+            sink.receive(Result<Int, TestError>.success(1))
+        }
+        firstContinuation.yield(.result(.success(1)))
+        #expect(await eventually { data.latestValue == .available(1) })
+        let staleRetry = try #require(data.retryAction)
+        let staleSink = try #require(retainedSink)
+
+        var continuations: [AsyncStream<Result<Int, TestError>>.Continuation] = []
+        second.bind({
+            let (stream, continuation) = AsyncStream<Result<Int, TestError>>.makeStream()
+            continuations.append(continuation)
+            return stream
+        }, to: data)
+
+        if case .terminated = firstContinuation.yield(.result(.success(99))) {
+            // Transfer cancels upstream consumption, as well as rejecting stale sink actions.
+        } else {
+            Issue.record("The previous context's source was not cancelled")
+        }
+        staleSink.receive(Result<Int, TestError>.success(99))
+        staleSink.reset()
+        staleRetry()
+        first?.reload(data)
+        first?.cancel(data)
+        first?.cancelAll()
+        first = nil
+
+        #expect(weakFirst == nil)
+        #expect(firstSourceCount == 1)
+        #expect(data.isLoading)
+        #expect(data.latestValue == .available(1))
+        let currentRetry = try #require(data.retryAction)
+
+        continuations[0].yield(.success(2))
+        #expect(await eventually { data.latestValue == .available(2) && data.isSuccessful })
+        currentRetry()
+        #expect(continuations.count == 2)
+        continuations[1].yield(.success(3))
+        #expect(await eventually { data.latestValue == .available(3) && data.isSuccessful })
+        continuations[1].finish()
+    }
+
+    @Test("Transferring to a disabled binding removes the previous retry")
+    func bindingTransfersToDisabledReload() throws {
+        let data = ViewData<Int>()
+        let first = ViewDataContext()
+        let second = ViewDataContext()
+        var sourceCount = 0
+        first.bind({
+            sourceCount += 1
+            return AsyncStream<Result<Int, TestError>> { _ in }
+        }, to: data)
+        let staleRetry = try #require(data.retryAction)
+
+        second.bind({ AsyncStream<Result<Int, TestError>> { _ in } }, to: data, reload: .disabled)
+        staleRetry()
+        first.cancelAll()
+        #expect(sourceCount == 1)
+        #expect(data.retryAction == nil)
+        #expect(data.isLoading)
+        second.cancel(data)
+        #expect(data.isEmpty)
+    }
+
+    @Test("Capturing a source directly does not retain its owning model")
+    func sourceCaptureReleasesOwner() {
+        weak var weakOwner: SourceCaptureOwner?
+        weak var weakContext: ViewDataContext?
+        let data: ViewData<Int>
+        do {
+            let owner = SourceCaptureOwner()
+            weakOwner = owner
+            weakContext = owner.context
+            data = owner.entries
+            owner.start()
+            #expect(data.isLoading)
+        }
+        #expect(weakOwner == nil)
+        #expect(weakContext == nil)
+        #expect(data.isEmpty)
+        #expect(data.retryAction == nil)
     }
 
     @Test("A load and binding update the same destination in arrival order")
@@ -751,6 +880,23 @@ struct ViewDataTests {
 
         #expect(await eventually { data.isSuccessful })
         #expect(data.latestValue == .available(42))
+    }
+}
+
+@MainActor
+private final class SourceCaptureOwner {
+    final class Source {
+        func values() -> AsyncStream<Result<Int, ViewDataTests.TestError>> {
+            AsyncStream { _ in }
+        }
+    }
+
+    let entries = ViewData<Int>()
+    let context = ViewDataContext()
+    private let useCase = Source()
+
+    func start() {
+        context.bind({ [useCase] in useCase.values() }, to: entries)
     }
 }
 

@@ -72,7 +72,8 @@ continuation.yield(.success(recoveredEntries))
 
 The later success replaces `latestValue` and moves the destination back to success. A source may
 instead finish after either result when it represents one request per subscription. If iteration
-itself throws, the terminal error enters failure.
+itself throws, the terminal error enters failure, except for `CancellationError`: source cancellation
+settles loading like normal completion without disabling the binding's configured reload behavior.
 
 ## Adapt a source-specific update type
 
@@ -203,7 +204,9 @@ completion. An existing success or failure phase is preserved.
 Cancel every binding explicitly with `cancelAll()`, or release the context. Its deinitializer
 cancels all subscriptions it still owns.
 
-Rebinding a destination cancels its current registration before starting the replacement. Other
-destinations owned by the same context are unaffected.
+Rebinding a destination cancels its current registration before starting the replacement, even
+when another context owns that registration. The previous context can no longer update or reload
+the destination, and its later cancellation or deallocation does not remove the new retry action.
+Other destinations owned by either context are unaffected.
 
 Next: [Presentation policies](presentation-policies.md) · [Diagnostics](diagnostics.md)

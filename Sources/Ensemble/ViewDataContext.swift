@@ -20,10 +20,13 @@
 //  SOFTWARE.
 //
 
+import Foundation
+
 /// Coordinates one-shot loads and owns the subscriptions that feed ``ViewData`` values.
 ///
 /// Keep a context for as long as its bindings should remain active. Each destination has at most
-/// one binding; binding it again cancels and replaces the previous subscription.
+/// one binding across all contexts; binding it again cancels and replaces the previous
+/// subscription, including one owned by another context.
 ///
 /// A load and binding can update the same destination in tandem. Their accepted updates are applied
 /// in arrival order, and a load does not cancel or replace the binding.
@@ -99,7 +102,8 @@ public final class ViewDataContext {
     /// loading restores the failure that preceded loading, settles to success when retained data
     /// exists, or settles to empty otherwise. Completion after an emitted success or failure
     /// preserves that phase. An error thrown by the sequence enters failure and ends the
-    /// subscription.
+    /// subscription. A `CancellationError` thrown by iteration settles loading using the same
+    /// rules as completion, without presenting a new failure or disabling configured reloads.
     ///
     /// The factory is invoked synchronously during binding and retained for reloads that need a new
     /// subscription. A method reference strongly retains its instance.
@@ -179,7 +183,7 @@ public final class ViewDataContext {
     /// If the destination was loading, it restores the failure that preceded loading, returns to
     /// success when retained data exists, or returns to empty otherwise. Existing success or failure
     /// presentation state is preserved. Cancellation also removes the retry action associated with
-    /// the binding.
+    /// the binding. This method does nothing when another context owns the binding.
     ///
     /// - Parameter destination: The presentation state whose binding should stop.
     public func cancel<Value>(_ destination: ViewData<Value>) {
@@ -215,13 +219,18 @@ private extension ViewDataContext {
         ) -> Void
     ) where Source: AsyncSequence {
         let identifier = ObjectIdentifier(destination)
+        destination.bindingContext?.cancel(destination)
         removeRegistration(identifier)
         ensembleLog.ensembleDebug(
             .bindingStarted(destination: identifier, reload: reload.logMode)
         )
 
+        let bindingID = UUID()
         let registration = Registration(removeRetryAction: { [weak destination] in
-            destination?.removeRetryAction()
+            guard let destination, destination.bindingID == bindingID else { return }
+            destination.bindingID = nil
+            destination.bindingContext = nil
+            destination.removeRetryAction()
         })
         let reloadAction = makeReloadAction(
             reload,
@@ -233,6 +242,8 @@ private extension ViewDataContext {
         )
 
         registrations[identifier] = registration
+        destination.bindingID = bindingID
+        destination.bindingContext = self
         registration.reloadAction = reloadAction
         if let reloadAction {
             destination.installRetryAction(reloadAction)
@@ -263,6 +274,14 @@ private extension ViewDataContext {
             registration: registration
         )
         let task = Task { [weak self, weak registration] in
+            defer {
+                if let self, let registration, self.registrations[identifier] === registration {
+                    registration.finishLoading()
+                    registration.task = nil
+                    ensembleLog.ensembleDebug(.bindingCompleted(destination: identifier))
+                }
+            }
+
             do {
                 for try await element in source {
                     guard Task.isCancelled == false else { return }
@@ -271,7 +290,8 @@ private extension ViewDataContext {
                     receive(element, sink)
                 }
             } catch is CancellationError {
-                return
+                // A producer can cancel independently of the context. Common terminal cleanup
+                // settles loading and allows refresh to attach a new subscription.
             } catch {
                 guard Task.isCancelled == false else { return }
                 guard let self, let registration else { return }
@@ -279,13 +299,6 @@ private extension ViewDataContext {
                 let failure: Result<Value, any Error> = .failure(error)
                 sink.receive(failure)
             }
-
-            guard Task.isCancelled == false else { return }
-            guard let self, let registration else { return }
-            guard self.registrations[identifier] === registration else { return }
-            registration.finishLoading()
-            registration.task = nil
-            ensembleLog.ensembleDebug(.bindingCompleted(destination: identifier))
         }
 
         registration.task = task
