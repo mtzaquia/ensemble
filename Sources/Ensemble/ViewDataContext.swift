@@ -38,6 +38,8 @@ import Foundation
 public final class ViewDataContext {
     private final class Registration {
         var task: Task<Void, Never>?
+        var isActive = true
+        var restartAction: (@MainActor () -> Void)?
         var reloadAction: ViewDataRetryAction?
         let removeRetryAction: @MainActor () -> Void
         var finishLoading: @MainActor () -> Void = {}
@@ -47,6 +49,17 @@ public final class ViewDataContext {
         }
     }
 
+    private struct TrackedDestination {
+        weak var destination: AnyObject?
+        let clear: @MainActor () -> Void
+    }
+
+    private final class Lifecycle {
+        var isCurrent = true
+    }
+
+    private var lifecycle = Lifecycle()
+    private var destinations: [ObjectIdentifier: TrackedDestination] = [:]
     private var registrations: [ObjectIdentifier: Registration] = [:]
 
     /// Creates a context with no active bindings.
@@ -73,17 +86,22 @@ public final class ViewDataContext {
     ) async {
         let identifier = ObjectIdentifier(destination)
         ensembleLog.ensembleDebug(.loadStarted(destination: identifier))
+        track(destination)
+        let lifecycle = lifecycle
         let loadingToken = destination.beginLoading()
 
         do {
             let value = try await operation()
+            guard lifecycle.isCurrent else { return }
             try Task.checkCancellation()
             destination.set(value)
             ensembleLog.ensembleDebug(.loadSucceeded(destination: identifier))
         } catch is CancellationError {
+            guard lifecycle.isCurrent else { return }
             destination.finishLoading(loadingToken)
             ensembleLog.ensembleDebug(.loadCancelled(destination: identifier))
         } catch {
+            guard lifecycle.isCurrent else { return }
             guard Task.isCancelled == false else {
                 destination.finishLoading(loadingToken)
                 ensembleLog.ensembleDebug(.loadCancelled(destination: identifier))
@@ -203,12 +221,62 @@ public final class ViewDataContext {
         }
     }
 
+    /// Begins a fresh context lifecycle, discarding previously tracked presentation data.
+    ///
+    /// Synchronously invalidates outstanding loads and cancels subscriptions, clears every live
+    /// tracked destination, then recreates registered bindings from their saved factories.
+    /// Replacement bindings use their original reload behavior and element handler and begin
+    /// in initial loading state. Completed bindings restart; explicitly cancelled bindings do not.
+    ///
+    /// One-shot operations are not rerun. They continue to follow caller cancellation, but their
+    /// eventual results and cleanup cannot affect the new lifecycle, even if they ignore cancellation.
+    /// Destinations are tracked weakly, including after explicit binding cancellation.
+    ///
+    /// Unlike ``ViewData/reset()``, which clears a value, and ``reload(_:)``, which preserves
+    /// content while refreshing, restart clears the context's presentation history. Applications
+    /// decide when session changes require this operation and notify each affected context.
+    public func restart() {
+        lifecycle.isCurrent = false
+        lifecycle = Lifecycle()
+        let currentLifecycle = lifecycle
+        let currentRegistrations = registrations
+        for registration in currentRegistrations.values {
+            registration.isActive = false
+            registration.task?.cancel()
+            registration.task = nil
+            registration.removeRetryAction()
+        }
+        destinations = destinations.filter { $0.value.destination != nil }
+        for destination in destinations.values {
+            destination.clear()
+        }
+        for (identifier, registration) in currentRegistrations {
+            guard lifecycle === currentLifecycle else { return }
+            guard registrations[identifier] === registration else { continue }
+            guard destinations[identifier]?.destination != nil else {
+                removeRegistration(identifier)
+                continue
+            }
+            registration.restartAction?()
+        }
+    }
+
     isolated deinit {
         cancelAll()
     }
 }
 
 private extension ViewDataContext {
+    private func track<Value>(_ destination: ViewData<Value>) {
+        destinations = destinations.filter { $0.value.destination != nil }
+        destinations[ObjectIdentifier(destination)] = TrackedDestination(
+            destination: destination,
+            clear: { [weak destination] in
+                destination?.reset()
+            }
+        )
+    }
+
     private func bindSource<Value, Source>(
         _ makeSource: @escaping @MainActor () -> Source,
         to destination: ViewData<Value>,
@@ -219,6 +287,7 @@ private extension ViewDataContext {
         ) -> Void
     ) where Source: AsyncSequence {
         let identifier = ObjectIdentifier(destination)
+        track(destination)
         destination.bindingContext?.cancel(destination)
         removeRegistration(identifier)
         ensembleLog.ensembleDebug(
@@ -232,6 +301,10 @@ private extension ViewDataContext {
             destination.bindingContext = nil
             destination.removeRetryAction()
         })
+        registration.restartAction = { [weak self, weak destination] in
+            guard let self, let destination else { return }
+            self.bindSource(makeSource, to: destination, reload: reload, receive: receive)
+        }
         let reloadAction = makeReloadAction(
             reload,
             makeSource: makeSource,
@@ -268,6 +341,7 @@ private extension ViewDataContext {
             _ sink: ViewDataSink<Value>
         ) -> Void
     ) where Source: AsyncSequence {
+        guard registrations[identifier] === registration, registration.isActive else { return }
         let sink = makeSink(
             destination: destination,
             identifier: identifier,
@@ -275,7 +349,7 @@ private extension ViewDataContext {
         )
         let task = Task { [weak self, weak registration] in
             defer {
-                if let self, let registration, self.registrations[identifier] === registration {
+                if let self, let registration, self.registrations[identifier] === registration, registration.isActive {
                     registration.finishLoading()
                     registration.task = nil
                     ensembleLog.ensembleDebug(.bindingCompleted(destination: identifier))
@@ -286,7 +360,7 @@ private extension ViewDataContext {
                 for try await element in source {
                     guard Task.isCancelled == false else { return }
                     guard let self, let registration else { return }
-                    guard self.registrations[identifier] === registration else { return }
+                    guard self.registrations[identifier] === registration, registration.isActive else { return }
                     receive(element, sink)
                 }
             } catch is CancellationError {
@@ -295,7 +369,7 @@ private extension ViewDataContext {
             } catch {
                 guard Task.isCancelled == false else { return }
                 guard let self, let registration else { return }
-                guard self.registrations[identifier] === registration else { return }
+                guard self.registrations[identifier] === registration, registration.isActive else { return }
                 let failure: Result<Value, any Error> = .failure(error)
                 sink.receive(failure)
             }
@@ -319,7 +393,7 @@ private extension ViewDataContext {
         case .resubscribe:
             ViewDataRetryAction { [weak self, weak destination, weak registration] in
                 guard let self, let destination, let registration else { return }
-                guard self.registrations[identifier] === registration else { return }
+                guard self.registrations[identifier] === registration, registration.isActive else { return }
                 ensembleLog.ensembleDebug(
                     .reloadRequested(destination: identifier, mode: .resubscribe)
                 )
@@ -334,7 +408,7 @@ private extension ViewDataContext {
         case .refresh(let refresh):
             ViewDataRetryAction { [weak self, weak destination, weak registration] in
                 guard let self, let destination, let registration else { return }
-                guard self.registrations[identifier] === registration else { return }
+                guard self.registrations[identifier] === registration, registration.isActive else { return }
                 ensembleLog.ensembleDebug(
                     .reloadRequested(destination: identifier, mode: .refresh)
                 )
@@ -382,7 +456,7 @@ private extension ViewDataContext {
     ) -> ViewDataSink<Value> {
         ViewDataSink { [weak self, weak destination, weak registration] action in
             guard let self, let destination, let registration else { return }
-            guard self.registrations[identifier] === registration else { return }
+            guard self.registrations[identifier] === registration, registration.isActive else { return }
 
             switch action {
             case .value(let value):

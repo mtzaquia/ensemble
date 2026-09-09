@@ -183,6 +183,31 @@ Reset does not cancel an active load or binding. A later accepted update can rep
 state. Use `ViewDataContext.cancel(_:)` when the binding should stop, and cancel the task awaiting
 `load(_:to:)` when the one-shot operation should stop.
 
+## Begin a fresh context lifecycle
+
+Reset clears a value; reload preserves content while refreshing; restart begins a fresh context
+lifecycle. For a session replacement, keep the same context and notify it on the main actor:
+
+```swift
+context.restart()
+```
+
+Restart synchronously invalidates old loads and cancels subscriptions, clears every live tracked
+destination, then invokes replacement source factories. Retained values, errors, loading state,
+and obsolete retry actions are discarded before any replacement factory runs. New subscriptions
+begin in their normal initial loading state and keep their saved reload behavior and custom element
+handler, including bindings configured with disabled reload.
+
+Completed registered bindings restart. Explicitly cancelled bindings have their retained content
+cleared but do not restart, and replaced bindings stay replaced. Destinations are tracked weakly.
+
+One-shot closures are not rerun or moved into a different task. They still follow caller cancellation;
+restart invalidates their eventual success, failure, and loading cleanup. Old subscriptions and
+retained sinks cannot update the replacement lifecycle even when producers ignore cancellation.
+
+This guarantee belongs to each context. Applications decide which session changes require a restart
+and notify their affected contexts.
+
 ## Handle completion and cancellation
 
 When a stream finishes without emitting while the destination is loading, the context restores a
