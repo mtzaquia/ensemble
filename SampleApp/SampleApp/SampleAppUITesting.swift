@@ -137,8 +137,8 @@ enum SampleAppAccessibility {
     static let animatedReorderingReverse = "sample.animated-reordering.reverse"
     static let animatedReorderingSibling = "sample.animated-reordering.sibling"
     static let animatedReorderingAnimation = "sample.animated-reordering.animation"
-    static let animatedReorderingTransitionAnimation =
-        "sample.animated-reordering.transition-animation"
+    static let animatedReorderingPhaseAnimation = "sample.animated-reordering.phase-animation"
+    static let animatedReorderingReplay = "sample.animated-reordering.replay"
     static let animatedReorderingSource = "sample.animated-reordering.source"
     static let animatedReorderingHide = "sample.animated-reordering.hide"
     static let animatedReorderingRestore = "sample.animated-reordering.restore"

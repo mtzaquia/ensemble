@@ -35,7 +35,6 @@ struct LoadingLabExample: View {
                 AsyncContent(
                     unwrapping: viewModel.entries,
                     loading: .placeholder(SampleEntry.placeholders),
-                    transitionAnimation: .default,
                     failure: .retained
                 ) { entries, source in
                     SampleEntryRows(entries: entries, source: source)
@@ -55,7 +54,6 @@ struct LoadingLabExample: View {
                     AsyncContent(
                         unwrapping: viewModel.entries,
                         loading: .placeholder(SampleEntry.placeholders),
-                        transitionAnimation: nil,
                         failure: .retained
                     ) { _, source in
                         SampleSourceBadge(source: source)

@@ -56,6 +56,21 @@ struct ViewDataPresentationRevision: Equatable, Sendable {
     fileprivate let revision: UInt
 }
 
+// Views can forward an accepted update through their own transaction without changing the
+// transaction used by other observers of the same presentation state.
+protocol ViewDataPresentationObserver: AnyObject {
+    func viewDataDidUpdate(phaseChanged: Bool)
+}
+
+protocol ViewDataPresentationSource: AnyObject {
+    func addPresentationObserver(_ observer: any ViewDataPresentationObserver)
+    func removePresentationObserver(_ observer: any ViewDataPresentationObserver)
+}
+
+private struct WeakViewDataPresentationObserver {
+    weak var value: (any ViewDataPresentationObserver)?
+}
+
 /// The availability of a successful value retained by ``ViewData``.
 ///
 /// Availability is independent of ``ViewData/phase``. Loading and failure can retain an available
@@ -128,16 +143,40 @@ public final class ViewData<Value> {
         }
     }
 
-    private struct Presentation {
+    struct Presentation {
         var phase: Phase
         var latestValue: ViewDataAvailability<Value>
         var retryAction: ViewDataRetryAction? = nil
         var loadingFailure: (any Error)? = nil
         var latestValueRevision = ViewDataLatestValueRevision()
         var presentationRevision: UInt = 0
+
+        var revision: ViewDataPresentationRevision {
+            ViewDataPresentationRevision(
+                sourceID: latestValueRevision.sourceID,
+                revision: presentationRevision
+            )
+        }
     }
 
-    private var presentation: Presentation
+    @ObservationIgnored private var rawPresentation: Presentation
+    @ObservationIgnored private var presentationObservers: [WeakViewDataPresentationObserver] = []
+
+    // All public presentation reads still share one Observation key. AsyncContent's adapter reads
+    // the untracked snapshot instead, so a raw update cannot overwrite its local transaction.
+    private var presentation: Presentation {
+        get {
+            access(keyPath: \.presentation)
+            return rawPresentation
+        }
+        set {
+            withMutation(keyPath: \.presentation) {
+                rawPresentation = newValue
+            }
+        }
+    }
+
+    var untrackedPresentation: Presentation { rawPresentation }
 
     /// The current lifecycle phase, including the latest error when the phase is failed.
     public var phase: Phase {
@@ -182,7 +221,7 @@ public final class ViewData<Value> {
 
     /// Creates empty presentation state.
     public init() {
-        self.presentation = Presentation(
+        self.rawPresentation = Presentation(
             phase: .empty,
             latestValue: .unavailable
         )
@@ -195,7 +234,7 @@ public final class ViewData<Value> {
     ///
     /// - Parameter value: The value to expose to observers from creation.
     public init(_ value: Value) {
-        self.presentation = Presentation(
+        self.rawPresentation = Presentation(
             phase: .success,
             latestValue: .available(value)
         )
@@ -317,6 +356,25 @@ extension ViewData {
             nextPresentation.latestValueRevision = nextPresentation.latestValueRevision.advanced()
         }
         nextPresentation.presentationRevision &+= 1
+        let phaseChanged = presentation.phase.kind != nextPresentation.phase.kind
         presentation = nextPresentation
+        presentationObservers.removeAll { $0.value == nil }
+        // Snapshot live observers before delivery; a callback may reconfigure its registration.
+        let observers = presentationObservers.compactMap(\.value)
+        for observer in observers {
+            observer.viewDataDidUpdate(phaseChanged: phaseChanged)
+        }
+    }
+}
+
+extension ViewData: ViewDataPresentationSource {
+    func addPresentationObserver(_ observer: any ViewDataPresentationObserver) {
+        presentationObservers.removeAll { $0.value == nil }
+        guard !presentationObservers.contains(where: { $0.value === observer }) else { return }
+        presentationObservers.append(WeakViewDataPresentationObserver(value: observer))
+    }
+
+    func removePresentationObserver(_ observer: any ViewDataPresentationObserver) {
+        presentationObservers.removeAll { $0.value == nil || $0.value === observer }
     }
 }

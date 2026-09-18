@@ -27,15 +27,15 @@ import SwiftUI
 struct AnimatedReorderingExample: View {
     @State private var viewModel = AnimatedReorderingViewModel()
     @State private var animatesListChanges = true
-    @State private var animatesPresentation = true
+    @State private var animatesPhases = false
     @State private var hidesRows = false
 
     var body: some View {
         List {
             Section("Initial loading") {
                 Text(
-                    "The placeholder mounts without animation. Its replacement is also content, "
-                        + "so Ensemble adds no transition."
+                    "The placeholder mounts without animation. Enable phase animation and replay "
+                        + "loading to animate its replacement inside AsyncContent."
                 )
                     .foregroundStyle(.secondary)
             }
@@ -53,10 +53,15 @@ struct AnimatedReorderingExample: View {
                 Toggle("Animate consumer list changes", isOn: $animatesListChanges)
                     .accessibilityIdentifier(SampleAppAccessibility.animatedReorderingAnimation)
 
-                Toggle("Animate presentation changes", isOn: $animatesPresentation)
-                    .accessibilityIdentifier(
-                        SampleAppAccessibility.animatedReorderingTransitionAnimation
-                    )
+                Toggle("Animate internal phase changes", isOn: $animatesPhases)
+                    .accessibilityIdentifier(SampleAppAccessibility.animatedReorderingPhaseAnimation)
+
+                Button("Replay placeholder loading") {
+                    hidesRows = false
+                    viewModel.replayLoading()
+                }
+                .disabled(viewModel.entries.phase.kind == .loading)
+                .accessibilityIdentifier(SampleAppAccessibility.animatedReorderingReplay)
 
                 Button("Update sibling and rows") {
                     viewModel.updateBoth()
@@ -80,8 +85,14 @@ struct AnimatedReorderingExample: View {
 
             Section("What this shows") {
                 Label(
-                    "AsyncContent owns presentation replacement",
+                    "Phase animation includes hidden-to-visible changes",
                     systemImage: "rectangle.dashed.and.paperclip"
+                )
+                Label(
+                    animatesPhases
+                        ? "Phase animation is local to AsyncContent"
+                        : "Internal phase animation is off by default",
+                    systemImage: "arrow.trianglehead.2.clockwise"
                 )
                 Label(
                     animatesListChanges
@@ -110,11 +121,11 @@ struct AnimatedReorderingExample: View {
     private var entriesPresentation: some View {
         AsyncContent(
             viewModel.entries,
-            loading: hidesRows ? .hidden : .placeholder(SampleEntry.placeholders),
-            transitionAnimation: animatesPresentation ? .default : nil
+            loading: hidesRows ? .hidden : .placeholder(SampleEntry.placeholders)
         ) { entries, source in
             rowsSection(entries: entries, source: source)
         }
+        .phaseAnimation(animatesPhases ? .snappy : nil)
     }
 
     @ViewBuilder
@@ -153,6 +164,18 @@ private final class AnimatedReorderingViewModel {
         guard didStart == false else { return }
         didStart = true
 
+        await loadInitialEntries()
+    }
+
+    func replayLoading() {
+        siblingRevision += 1
+        entries.reset()
+        Task { @MainActor [weak self] in
+            await self?.loadInitialEntries()
+        }
+    }
+
+    private func loadInitialEntries() async {
         await context.load({
             let delay: Duration = SampleAppUITesting.isEnabled
                 ? .seconds(8)

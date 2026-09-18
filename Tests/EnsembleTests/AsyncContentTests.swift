@@ -85,34 +85,35 @@ struct AsyncContentTests {
         }
     }
 
-    @Test("The transition animation parameter composes across every initializer family")
-    func transitionAnimationParameterComposes() {
+    @Test("The phase animation modifier composes across every initializer family")
+    func phaseAnimationModifierComposes() {
         let data = ViewData<Int>()
         let optionalData = ViewData<Int?>(42)
 
         for animation in [Animation.default, nil] {
-            _ = AsyncContent(data, transitionAnimation: animation) { value, _ in
+            _ = AsyncContent(data) { value, _ in
                 Text("\(value)")
             }
+            .phaseAnimation(animation)
 
-            _ = AsyncContent(data, transitionAnimation: animation) { value, _ in
+            _ = AsyncContent(data) { value, _ in
                 Text("\(value)")
             } failure: { error, _ in
                 Text(error.localizedDescription)
             }
+            .phaseAnimation(animation)
 
-            _ = AsyncContent(unwrapping: optionalData, transitionAnimation: animation) { value, _ in
+            _ = AsyncContent(unwrapping: optionalData) { value, _ in
                 Text("\(value)")
             }
+            .phaseAnimation(animation)
 
-            _ = AsyncContent(
-                unwrapping: optionalData,
-                transitionAnimation: animation
-            ) { value, _ in
+            _ = AsyncContent(unwrapping: optionalData) { value, _ in
                 Text("\(value)")
             } failure: { error, _ in
                 Text(error.localizedDescription)
             }
+            .phaseAnimation(animation)
         }
     }
 
@@ -125,6 +126,7 @@ struct AsyncContentTests {
             _ = AsyncContent(data) { value, _ in
                 Text("\(value)")
             }
+            .phaseAnimation(.snappy)
         }
 
         data.reset()
@@ -132,21 +134,59 @@ struct AsyncContentTests {
         #expect(observation.cycles == 0)
     }
 
-    @Test("AsyncContent body observes presentation state")
+    @Test("AsyncContent observation forwards accepted presentation changes")
     func bodyObservesPresentation() {
         let data = ViewData(1)
-        let content = AsyncContent(data) { value, _ in
-            Text("\(value)")
-        }
+        let content = AsyncContentObservation()
+        content.bind(to: data, animation: nil)
         let observation = ObservationCounter()
 
         observation.track {
-            _ = content.body
+            _ = content.revision
         }
 
         data.reset()
 
         #expect(observation.cycles == 1)
+    }
+
+    @Test("AsyncContent observation rebinds without duplicate or stale notifications")
+    func observationRebinding() {
+        let first = ViewData(1)
+        let second = ViewData(2)
+        let observation = AsyncContentObservation()
+        observation.bind(to: first, animation: .snappy)
+        observation.bind(to: first, animation: nil)
+        first.set(3)
+        #expect(observation.revision == 1)
+
+        observation.bind(to: second, animation: .snappy)
+        first.reset()
+        #expect(observation.revision == 1)
+        second.reset()
+        #expect(observation.revision == 2)
+    }
+
+    @Test("Presentation observation does not retain its view adapter or data")
+    func observationLifetime() {
+        let observation = AsyncContentObservation()
+        weak var weakData: ViewData<Int>?
+        do {
+            let data = ViewData(1)
+            weakData = data
+            observation.bind(to: data, animation: nil)
+        }
+        #expect(weakData == nil)
+
+        let data = ViewData(1)
+        weak var weakObservation: AsyncContentObservation?
+        do {
+            let temporary = AsyncContentObservation()
+            weakObservation = temporary
+            temporary.bind(to: data, animation: nil)
+        }
+        #expect(weakObservation == nil)
+        data.reset()
     }
 
     @Test("AsyncContent resolves the current presentation")
@@ -161,22 +201,84 @@ struct AsyncContentTests {
         #expect(try #require(content.rendering.content).value == 2)
     }
 
-    @Test("Configured transition animation replaces the transaction animation")
-    func configuredTransitionAnimation() {
-        var transaction = Transaction()
+    @Test("Configured phase animation replaces the transaction animation")
+    func configuredPhaseAnimation() {
+        var transaction = Transaction(animation: .linear)
 
-        applyAsyncContentTransitionAnimation(.default, to: &transaction)
+        applyAsyncContentPhaseAnimation(.snappy, to: &transaction)
 
-        #expect(transaction.animation != nil)
+        #expect(transaction.animation == .snappy)
     }
 
-    @Test("Nil transition animation preserves an inherited transaction")
-    func nilTransitionAnimationPreservesInheritedTransaction() {
+    @Test("Nil phase animation preserves inherited structural or consumer animation")
+    func nilPhaseAnimationPreservesInheritedTransaction() {
         var transaction = Transaction(animation: .default)
 
-        applyAsyncContentTransitionAnimation(nil, to: &transaction)
+        applyAsyncContentPhaseAnimation(nil, to: &transaction)
 
-        #expect(transaction.animation != nil)
+        #expect(transaction.animation == .default)
+        #expect(transaction.disablesAnimations == false)
+    }
+
+    @Test("Phase animation respects transactions that disable animations")
+    func disabledAnimationTransaction() {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+
+        applyAsyncContentPhaseAnimation(.snappy, to: &transaction)
+
+        #expect(transaction.animation == nil)
+        #expect(transaction.disablesAnimations)
+    }
+
+    @Test("Phase identity distinguishes placeholder-to-success without replacing content identity")
+    func placeholderReplacementChangesPhase() {
+        let data = ViewData<Int>()
+        let content = AsyncContent(data, loading: .placeholder(0)) { value, _ in
+            Text("\(value)")
+        }
+        #expect(content.presentation.phase == .empty)
+        #expect(content.rendering.kind == .content)
+
+        data.beginLoading()
+        #expect(content.presentation.phase == .loading)
+        #expect(content.rendering.kind == .content)
+
+        data.set(42)
+        #expect(content.presentation.phase == .content)
+        #expect(content.rendering.kind == .content)
+
+        data.set(43)
+        #expect(content.presentation.phase == .content)
+
+        data.fail(TestError.expected)
+        #expect(content.presentation.phase == .failure)
+
+        data.reset()
+        #expect(content.presentation.phase == .empty)
+    }
+
+    @Test("Optional rendering uses the underlying lifecycle phase even when hidden or retained")
+    func optionalPresentationPhase() {
+        let data = ViewData<Int?>(nil)
+        let content = AsyncContent(unwrapping: data, failure: .retained) { value, _ in
+            Text("\(value)")
+        }
+        #expect(content.presentation.phase == .content)
+        #expect(content.rendering.kind == .hidden)
+
+        data.beginLoading()
+        #expect(content.presentation.phase == .loading)
+        data.fail(TestError.expected)
+        #expect(content.presentation.phase == .failure)
+
+        data.set(42)
+        data.beginLoading()
+        #expect(content.presentation.phase == .loading)
+        #expect(content.rendering.kind == .content)
+        data.fail(TestError.expected)
+        #expect(content.presentation.phase == .failure)
+        #expect(content.rendering.kind == .content)
     }
 
     @Test("Latest, retained, and placeholder presentations are all content")

@@ -216,9 +216,9 @@ nonisolated final class SampleAppUITests: XCTestCase {
         restore.tap()
         XCTAssertTrue(first.waitForExistence(timeout: 3))
 
-        let transitionAnimation = app.switches[A11y.animatedReorderingTransitionAnimation]
-        scrollUntilHittable(transitionAnimation, direction: .up)
-        transitionAnimation.tap()
+        let phaseAnimation = app.switches[A11y.animatedReorderingPhaseAnimation].switches.firstMatch
+        scrollUntilHittable(phaseAnimation, direction: .up)
+        phaseAnimation.tap()
         scrollUntilHittable(hide, direction: .up)
         hide.tap()
         XCTAssertTrue(waitForNonExistence(first))
@@ -241,8 +241,39 @@ nonisolated final class SampleAppUITests: XCTestCase {
     }
 
     @MainActor
+    func testPhaseAnimationCanBeEnabledAndDisabledWhileReplayingPlaceholders() {
+        launch(.animatedReordering)
+        let first = app.staticTexts.matching(identifier: A11y.entry(501)).firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 12))
+
+        let phaseAnimation = app.switches[A11y.animatedReorderingPhaseAnimation].switches.firstMatch
+        scrollUntilHittable(phaseAnimation, direction: .up)
+        XCTAssertEqual(phaseAnimation.value as? String, "0")
+
+        let replay = app.buttons[A11y.animatedReorderingReplay]
+        let placeholder = app.staticTexts.matching(identifier: A11y.entry(0)).firstMatch
+        for expectedSibling in 1...2 {
+            scrollUntilHittable(phaseAnimation, direction: .up)
+            phaseAnimation.tap()
+            scrollUntilHittable(replay, direction: .up)
+            replay.tap()
+            XCTAssertTrue(waitForLabelContaining(
+                "Sibling update \(expectedSibling)",
+                on: element(A11y.animatedReorderingSibling)
+            ))
+            // Redacted placeholder text is not hittable. Reveal it without waiting for a tap target.
+            app.swipeDown()
+            app.swipeDown()
+            XCTAssertTrue(placeholder.waitForExistence(timeout: 2))
+            XCTAssertTrue(waitForNonExistence(placeholder, timeout: 10))
+            XCTAssertTrue(first.waitForExistence(timeout: 3))
+        }
+    }
+
+    @MainActor
     private func launch(_ scenario: Scenario) {
         continueAfterFailure = false
+        XCUIDevice.shared.orientation = .portrait
         app = XCUIApplication()
         app.launchArguments = ["UI_TESTING", "--scenario=\(scenario.rawValue)"]
         app.launch()
@@ -327,8 +358,8 @@ private enum A11y {
     static let animatedReorderingReverse = "sample.animated-reordering.reverse"
     static let animatedReorderingSibling = "sample.animated-reordering.sibling"
     static let animatedReorderingAnimation = "sample.animated-reordering.animation"
-    static let animatedReorderingTransitionAnimation =
-        "sample.animated-reordering.transition-animation"
+    static let animatedReorderingPhaseAnimation = "sample.animated-reordering.phase-animation"
+    static let animatedReorderingReplay = "sample.animated-reordering.replay"
     static let animatedReorderingHide = "sample.animated-reordering.hide"
     static let animatedReorderingRestore = "sample.animated-reordering.restore"
 

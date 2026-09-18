@@ -123,6 +123,24 @@ enum AsyncContentRenderingKind: Equatable {
     case failure
 }
 
+// Lifecycle identity is independent of the category selected by the rendering policies.
+// In particular, a placeholder and a successful value share content identity but not phase.
+enum AsyncContentPhase: Equatable {
+    case empty
+    case loading
+    case content
+    case failure
+
+    init<Value>(_ phase: ViewData<Value>.Phase) {
+        switch phase {
+        case .empty: self = .empty
+        case .loading: self = .loading
+        case .success: self = .content
+        case .failure: self = .failure
+        }
+    }
+}
+
 extension AsyncContentRendering {
     var kind: AsyncContentRenderingKind {
         switch self {
@@ -137,36 +155,48 @@ private enum AsyncContentData<Value> {
     case value(ViewData<Value>)
     case optionalValue(ViewData<Value?>)
 
+    var presentationSource: any ViewDataPresentationSource {
+        switch self {
+        case .value(let data): data
+        case .optionalValue(let data): data
+        }
+    }
+
     func presentation(
         loadingPolicy: AsyncContentLoadingPolicy<Value>,
         failureRendering: AsyncContentFailureRendering
     ) -> AsyncContentPresentation<Value> {
         switch self {
         case .value(let data):
-            AsyncContentPresentation(
-                rendering: data.asyncContentRendering(
+            let snapshot = data.untrackedPresentation
+            return AsyncContentPresentation(
+                rendering: snapshot.asyncContentRendering(
                     loadingPolicy: loadingPolicy,
                     failureRendering: failureRendering,
                     project: { .some($0) }
                 ),
-                revision: data.presentationRevision
+                revision: snapshot.revision,
+                phase: AsyncContentPhase(snapshot.phase)
             )
         case .optionalValue(let data):
-            AsyncContentPresentation(
-                rendering: data.asyncContentRendering(
+            let snapshot = data.untrackedPresentation
+            return AsyncContentPresentation(
+                rendering: snapshot.asyncContentRendering(
                     loadingPolicy: loadingPolicy,
                     failureRendering: failureRendering,
                     project: { $0 }
                 ),
-                revision: data.presentationRevision
+                revision: snapshot.revision,
+                phase: AsyncContentPhase(snapshot.phase)
             )
         }
     }
 }
 
-private struct AsyncContentPresentation<Value> {
+struct AsyncContentPresentation<Value> {
     let rendering: AsyncContentRendering<Value>
     let revision: ViewDataPresentationRevision
+    let phase: AsyncContentPhase
 }
 
 /// Renders a ``ViewData`` value according to view-local loading and failure policies.
@@ -175,18 +205,17 @@ private struct AsyncContentPresentation<Value> {
 /// apply only to the content produced by this instance, whether that content is a row, section, or
 /// larger region composed by the app.
 ///
-/// By default, ``AsyncContent`` seeds its initial rendering without animation, then explicitly
-/// animates post-mount changes between hidden, successful content, and failure content. Latest,
-/// retained, and placeholder values share one content category, so successful-value replacement
-/// does not receive an Ensemble-originated animation.
+/// Phase changes do not receive a phase animation by default. Use ``View/phaseAnimation(_:)`` to
+/// animate changes between empty, loading, successful, and failed phases, including
+/// placeholder-to-success replacement.
+/// The initial presentation does not receive a phase animation.
 ///
-/// Content-to-content replacement renders the incoming snapshot directly and inherits the
-/// consumer's current transaction. Passing `nil` for `transitionAnimation` supplies no local
-/// animation when the rendered category changes.
+/// Latest, retained, and placeholder values share content identity. Changes within the same phase
+/// render the incoming snapshot directly and inherit the consumer's current transaction.
 ///
-/// This animation does not configure a SwiftUI transition modifier and cannot infer collection
-/// identity from the opaque content builder. Animate insertion, removal, reordering, and value
-/// changes inside successful content at the identity-bearing consumer boundary.
+/// Phase animation also covers policy-driven insertion and removal, such as hidden loading content
+/// becoming visible on success. It does not configure a SwiftUI transition modifier. Insertion or
+/// removal of the entire `AsyncContent` by an ancestor uses that ancestor's transaction.
 ///
 /// The loading policy applies while the data is empty as well as loading. When that policy renders
 /// no content, start an initial binding from a stable ancestor rather than a `.task` modifier
@@ -195,12 +224,16 @@ public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
     private let data: AsyncContentData<Value>
     private let loadingPolicy: AsyncContentLoadingPolicy<Value>
     private let failureRendering: AsyncContentFailureRendering
-    private let transitionAnimation: Animation?
+    @Environment(\.ensemblePhaseAnimation) private var configuredPhaseAnimation
+    @State private var observation = AsyncContentObservation()
     private let content: (Value, AsyncContentSource) -> Content
     private let failureContent: (any Error, ViewDataRetryAction?) -> FailureContent
 
     @ViewBuilder
     public var body: some View {
+        let observation = observation
+        let _ = observation.bind(to: data.presentationSource, animation: configuredPhaseAnimation)
+        let _ = observation.revision
         let presentation = data.presentation(
             loadingPolicy: loadingPolicy,
             failureRendering: failureRendering
@@ -209,7 +242,8 @@ public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
         AsyncContentRenderer(
             rendering: presentation.rendering,
             presentationRevision: presentation.revision,
-            transitionAnimation: transitionAnimation,
+            phase: presentation.phase,
+            phaseAnimation: configuredPhaseAnimation,
             content: content,
             failureContent: failureContent
         )
@@ -228,8 +262,6 @@ public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
     /// - Parameters:
     ///   - data: The presentation state to render.
     ///   - loading: The presentation used while `data` is empty or loading.
-    ///   - transitionAnimation: The animation for post-mount changes between rendered categories,
-    ///     or `nil` for no Ensemble-supplied animation.
     ///   - failure: The presentation used after `data` receives a failure.
     ///   - content: A builder receiving the rendered value and whether its source is latest,
     ///     retained, or a placeholder.
@@ -238,7 +270,6 @@ public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
     public init(
         _ data: ViewData<Value>,
         loading: AsyncContentLoadingPolicy<Value> = .retained,
-        transitionAnimation: Animation? = .default,
         failure: AsyncContentFailurePolicy = .failureContent,
         @ViewBuilder content: @escaping (Value, AsyncContentSource) -> Content,
         @ViewBuilder failure failureContent: @escaping (any Error, ViewDataRetryAction?) -> FailureContent
@@ -247,7 +278,6 @@ public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
             data: .value(data),
             loading: loading,
             failureRendering: AsyncContentFailureRendering(failure),
-            transitionAnimation: transitionAnimation,
             content: content,
             failureContent: failureContent
         )
@@ -266,15 +296,12 @@ public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
     /// - Parameters:
     ///   - data: The presentation state to render.
     ///   - loading: The presentation used while `data` is empty or loading.
-    ///   - transitionAnimation: The animation for post-mount changes between rendered categories,
-    ///     or `nil` for no Ensemble-supplied animation.
     ///   - failure: The presentation used after `data` receives a failure.
     ///   - content: A builder receiving the rendered value and whether its source is latest,
     ///     retained, or a placeholder.
     public init(
         _ data: ViewData<Value>,
         loading: AsyncContentLoadingPolicy<Value> = .retained,
-        transitionAnimation: Animation? = .default,
         failure: AsyncContentFailureFallbackPolicy = .retained,
         @ViewBuilder content: @escaping (Value, AsyncContentSource) -> Content
     ) where FailureContent == EmptyView {
@@ -282,7 +309,6 @@ public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
             data: .value(data),
             loading: loading,
             failureRendering: AsyncContentFailureRendering(failure),
-            transitionAnimation: transitionAnimation,
             content: content,
             failureContent: { _, _ in EmptyView() }
         )
@@ -292,14 +318,12 @@ public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
         data: AsyncContentData<Value>,
         loading: AsyncContentLoadingPolicy<Value>,
         failureRendering: AsyncContentFailureRendering,
-        transitionAnimation: Animation?,
         content: @escaping (Value, AsyncContentSource) -> Content,
         failureContent: @escaping (any Error, ViewDataRetryAction?) -> FailureContent
     ) {
         self.data = data
         self.loadingPolicy = loading
         self.failureRendering = failureRendering
-        self.transitionAnimation = transitionAnimation
         self.content = content
         self.failureContent = failureContent
     }
@@ -316,8 +340,6 @@ extension AsyncContent {
     /// - Parameters:
     ///   - data: The optional presentation state to render.
     ///   - loading: The presentation used while `data` is empty or loading.
-    ///   - transitionAnimation: The animation for post-mount changes between rendered categories,
-    ///     or `nil` for no Ensemble-supplied animation.
     ///   - failure: The presentation used after `data` receives a failure.
     ///   - content: A builder receiving the unwrapped value and whether its source is latest,
     ///     retained, or a placeholder.
@@ -326,7 +348,6 @@ extension AsyncContent {
     public init(
         unwrapping data: ViewData<Value?>,
         loading: AsyncContentLoadingPolicy<Value> = .retained,
-        transitionAnimation: Animation? = .default,
         failure: AsyncContentFailurePolicy = .failureContent,
         @ViewBuilder content: @escaping (Value, AsyncContentSource) -> Content,
         @ViewBuilder failure failureContent: @escaping (any Error, ViewDataRetryAction?) -> FailureContent
@@ -335,7 +356,6 @@ extension AsyncContent {
             data: .optionalValue(data),
             loading: loading,
             failureRendering: AsyncContentFailureRendering(failure),
-            transitionAnimation: transitionAnimation,
             content: content,
             failureContent: failureContent
         )
@@ -351,15 +371,12 @@ extension AsyncContent {
     /// - Parameters:
     ///   - data: The optional presentation state to render.
     ///   - loading: The presentation used while `data` is empty or loading.
-    ///   - transitionAnimation: The animation for post-mount changes between rendered categories,
-    ///     or `nil` for no Ensemble-supplied animation.
     ///   - failure: The presentation used after `data` receives a failure.
     ///   - content: A builder receiving the unwrapped value and whether its source is latest,
     ///     retained, or a placeholder.
     public init(
         unwrapping data: ViewData<Value?>,
         loading: AsyncContentLoadingPolicy<Value> = .retained,
-        transitionAnimation: Animation? = .default,
         failure: AsyncContentFailureFallbackPolicy = .retained,
         @ViewBuilder content: @escaping (Value, AsyncContentSource) -> Content
     ) where FailureContent == EmptyView {
@@ -367,7 +384,6 @@ extension AsyncContent {
             data: .optionalValue(data),
             loading: loading,
             failureRendering: AsyncContentFailureRendering(failure),
-            transitionAnimation: transitionAnimation,
             content: content,
             failureContent: { _, _ in EmptyView() }
         )
@@ -375,30 +391,62 @@ extension AsyncContent {
 }
 
 extension AsyncContent {
-    var rendering: AsyncContentRendering<Value> {
+    var presentation: AsyncContentPresentation<Value> {
         data.presentation(
             loadingPolicy: loadingPolicy,
             failureRendering: failureRendering
-        ).rendering
+        )
+    }
+
+    var rendering: AsyncContentRendering<Value> {
+        presentation.rendering
     }
 }
 
-func applyAsyncContentTransitionAnimation(
-    _ transitionAnimation: Animation?,
+func applyAsyncContentPhaseAnimation(
+    _ phaseAnimation: Animation?,
     to transaction: inout Transaction
 ) {
-    guard let transitionAnimation else { return }
-    transaction.animation = transitionAnimation
+    guard let phaseAnimation, !transaction.disablesAnimations else { return }
+    transaction.animation = phaseAnimation
 }
 
-// Same-category snapshots remain attached to the parent's transaction. Category changes replace
-// the animation on that update's transaction without mirroring the rendering through local state.
+// The observable revision is forwarded at mutation time, before List performs its structural diff.
+// Rendering remains a direct snapshot read: no onChange feedback loop or mirrored rendering state.
+@Observable
+final class AsyncContentObservation: ViewDataPresentationObserver {
+    var revision: UInt = 0
+    @ObservationIgnored private weak var source: (any ViewDataPresentationSource)?
+    @ObservationIgnored private var animation: Animation?
+
+    func bind(to source: any ViewDataPresentationSource, animation: Animation?) {
+        if self.source !== source {
+            self.source?.removePresentationObserver(self)
+            self.source = source
+            source.addPresentationObserver(self)
+        }
+        self.animation = animation
+    }
+
+    func viewDataDidUpdate(phaseChanged: Bool) {
+        if phaseChanged, let animation {
+            // Set only this transaction property; custom caller transaction values remain intact.
+            withTransaction(\.animation, animation) {
+                revision &+= 1
+            }
+        } else {
+            revision &+= 1
+        }
+    }
+}
+
 private struct AsyncContentRenderer<Value, Content: View, FailureContent: View>: View {
     let rendering: AsyncContentRendering<Value>
     // This concrete input distinguishes accepted presentation changes whose opaque rendering values
     // cannot be compared structurally by SwiftUI.
     let presentationRevision: ViewDataPresentationRevision
-    let transitionAnimation: Animation?
+    let phase: AsyncContentPhase
+    let phaseAnimation: Animation?
     let content: (Value, AsyncContentSource) -> Content
     let failureContent: (any Error, ViewDataRetryAction?) -> FailureContent
 
@@ -413,13 +461,13 @@ private struct AsyncContentRenderer<Value, Content: View, FailureContent: View>:
                 failureContent(error, retryAction)
             }
         }
-        .transaction(value: rendering.kind) { transaction in
-            applyAsyncContentTransitionAnimation(transitionAnimation, to: &transaction)
+        .transaction(value: phase) { transaction in
+            applyAsyncContentPhaseAnimation(phaseAnimation, to: &transaction)
         }
     }
 }
 
-private extension ViewData {
+private extension ViewData.Presentation {
     func asyncContentRendering<Output>(
         loadingPolicy: AsyncContentLoadingPolicy<Output>,
         failureRendering: AsyncContentFailureRendering,

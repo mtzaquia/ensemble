@@ -21,21 +21,26 @@ for manual inspection of transitions.
 The `animated-reordering` scenario is the direct animation acceptance path:
 
 1. A placeholder is mounted without a first-draw fly-in.
-2. A delayed local result replaces it without an Ensemble transition because placeholder and latest
-   values are both successful content.
+2. A delayed local result replaces it without an Ensemble animation because phase animation starts
+   disabled.
 3. Consumer-owned animation on the enclosing `List`, driven by `latestValueRevision`, handles
    stable-ID insertion, removal, and reordering while row detail changes use a row-level trigger.
-4. Hide and restore the section to see post-mount presentation removal and insertion controlled by
-   `transitionAnimation`.
-5. Toggle list animation and presentation animation independently, including the
-   `transitionAnimation: nil` branch that supplies no local category-transition animation.
+4. Hide and restore the section to see phase-driven removal and insertion.
+5. Toggle consumer list animation and phase animation independently.
+6. Enable phase animation and use “Replay placeholder loading” to
+   opt into `.phaseAnimation(.snappy)`, then disable it and replay again to compare. The sibling
+   updates alongside the reset without being configured for a phase animation.
 
 The source badge, stable row identifiers, inserted and removed rows, changed row detail, and action
 text make each ownership boundary legible. The same ambient-transaction approach works when the
 identity-bearing content is hosted by a list, stack, or another container. UI tests verify
-placeholder/latest visibility, both reorder directions, hidden/restore behavior, and both animation
-toggles. They do not prove motion; inspect the scenario directly in Simulator for that part of the
-contract.
+placeholder/latest visibility, both reorder directions, hidden/restore behavior, and all animation
+toggles. Hosted SwiftUI package tests inspect descendant transactions and native List row-position
+animations to verify phase-animation scope, the unanimated default, inherited transactions, and
+same-phase updates. The independent-sections screen applies `.phaseAnimation(.snappy)` to its
+entire List; no additional List animation modifier is needed for its phase-driven structural changes.
+Final-state UI tests do not prove motion; inspect the scenario directly in Simulator for that part
+of the contract.
 
 ## Validation
 

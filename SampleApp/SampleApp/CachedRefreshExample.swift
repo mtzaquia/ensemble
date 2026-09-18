@@ -31,7 +31,6 @@ struct CachedRefreshExample: View {
         AsyncContent(
             viewModel.entries,
             loading: .placeholder(SampleEntry.placeholders),
-            transitionAnimation: .default,
             failure: .retained
         ) { entries, source in
             List {

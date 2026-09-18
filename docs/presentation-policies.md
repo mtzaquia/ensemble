@@ -115,39 +115,79 @@ successful result is retained.
 
 ## Own animation at the right boundary
 
-Presentation replacement and successful-content changes have different owners.
+Phase changes and same-phase value updates have separate animation boundaries. Policy-driven
+insertion and removal are phase changes too: hidden loading content becoming visible on success
+uses the phase animation. When an ancestor independently inserts or removes the entire
+`AsyncContent` instance, that ancestor owns the transaction.
 
-### Animate presentation replacement
+### Opt into internal phase animation
 
-`transitionAnimation` defaults to `.default`. `AsyncContent` explicitly applies it after mount when
-the final rendered category changes between hidden, content, and failure. The initial category is
-seeded without animation.
-
-Latest, retained, and placeholder values all belong to the content category. Changes such as
-placeholder-to-latest, latest-to-retained, and latest-A-to-latest-B therefore receive no
-Ensemble-originated animation. A reset that hides content and a later value that restores it are
-category changes and can animate.
-
-Pass `nil` when `AsyncContent` should supply no animation for rendered-category changes:
+Use `.phaseAnimation(_:)` to animate changes between the underlying data's empty, loading,
+successful, and failed phases. No phase animation is supplied by default, preserving existing
+placeholder-to-content behavior:
 
 ```swift
 AsyncContent(
   viewModel.entries,
-  transitionAnimation: nil
-) { entries, _ in
+  loading: .placeholder(Entry.placeholders)
+) { entries, source in
   EntryRows(entries)
+    .redacted(reason: source == .placeholder ? .placeholder : [])
+} failure: { error, _ in
+  Text(error.localizedDescription)
 }
+.phaseAnimation(.snappy)
 ```
 
-For content-to-content replacement, `AsyncContent` renders the concrete incoming snapshot directly
-in the consumer's current transaction because the category remains stable. For a category change,
-it replaces that update's transaction animation when `transitionAnimation` is non-`nil`. Passing
-`nil` leaves an inherited consumer animation unchanged. This keeps consumer-owned list updates
-atomic while adding insertion, removal, and replacement animation only at the
-hidden/content/failure boundary. `AsyncContent` does not configure a SwiftUI `.transition`
-modifier or mirror presentation changes through view-local state.
+The initial presentation does not receive a phase animation. Later phase changes—including
+placeholder-to-success, success-to-loading with retained content, and failure recovery—receive
+the configured animation inside this AsyncContent. Policy-selected rendering and lifecycle remain
+distinct: a loading phase can still render retained rows, and retry can keep failure content
+visible while the phase is loading.
 
-### Animate successful content
+The modifier is available on any `View`. Its configuration cascades through the environment to
+descendant `AsyncContent` instances, including nested instances. Apply it directly to one instance
+or to an enclosing container to configure a region:
+
+```swift
+VStack {
+  AsyncContent(viewModel.profile) { profile, _ in
+    ProfileSummary(profile)
+  }
+  AsyncContent(viewModel.entries) { entries, _ in
+    EntryRows(entries)
+  }
+  .phaseAnimation(nil)
+}
+.phaseAnimation(.snappy)
+```
+
+Here the profile inherits `.snappy`; the entries clear that phase-animation configuration. The
+nearest modifier wins, following normal SwiftUI environment precedence. Each instance supplies
+an animated transaction only when its own phase changes. The presentation update is forwarded in
+that transaction before the surrounding container performs its structural diff. A `List` can
+therefore animate phase-driven insertions and removals without its own `.animation` modifier.
+Rendered descendants can animate too. The container may reposition neighboring rows as it reflows;
+unrelated presentation updates are not wrapped in that instance's phase-animation transaction.
+
+A non-`nil` phase animation replaces the inherited animation for the presentation update when the
+phase changes, including when that update inserts, removes, or replaces rendered views. Passing
+`.phaseAnimation(nil)` supplies no phase animation and leaves the inherited transaction intact.
+An explicit `nil` overrides inherited phase-animation configuration; it does not strip an animation
+already supplied by an ancestor's transaction.
+Updates within the same phase, including success-to-success value replacement, receive no phase
+animation and preserve their inherited transaction.
+
+This modifier preserves the existing content subtree identity and adds no layout container. It
+does not choose a visual transition effect; SwiftUI `.transition` and `.contentTransition`
+modifiers remain owned by the views that support them.
+
+The former `transitionAnimation` initializer parameter has been removed. To migrate an explicit
+animation, apply `.phaseAnimation(animation)` to the instance instead. Unlike the former parameter,
+the modifier also covers placeholder replacement and phase changes that keep the rendering category
+unchanged. Omitting it supplies no local animation, including for hidden/content/failure changes.
+
+### Animate updates within successful content
 
 The consumer owns successful-value animation because it knows the relevant identity and domain
 fields. Attach array-replacement animation to the container that performs layout:
