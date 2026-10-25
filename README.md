@@ -120,6 +120,11 @@ With this `AsyncContent` initializer, loading and failure render nothing until a
 exists, then retain that value. The [presentation policies guide](docs/presentation-policies.md)
 shows how to add placeholder or failure UI and where presentation and content animation belong.
 
+When adding skeletons, use `loading: .placeholder(...)` and redact only `source == .placeholder`.
+Ensemble keeps successful content, including empty results, visible throughout refresh. Keep the
+same `ViewData` instance; resetting it or redacting on the loading phase defeats that retention.
+See [the refresh pattern](docs/presentation-policies.md#keep-successful-content-visible-throughout-refresh).
+
 The surrounding `ZStack` remains mounted while `AsyncContent` is empty, making it a reliable place
 to start the binding. Releasing the context cancels its subscription.
 
@@ -139,7 +144,8 @@ That is the core idea: bind observable presentation data once, then render its l
 
 Open [`SampleApp/SampleApp.xcodeproj`](SampleApp/SampleApp.xcodeproj) to explore dedicated failure
 content, seeded content retained through refresh, independently loading sections, and the
-placeholder-first stable-ID animation scenario. See [`SampleApp/README.md`](SampleApp/README.md)
+placeholder-first stable-ID animation scenario. The Cached refresh screen compares fast and slow
+requests, retained empty results, and deliberate invalidation. See [`SampleApp/README.md`](SampleApp/README.md)
 for the scenario guide and manual animation checks.
 
 ## License

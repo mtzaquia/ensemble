@@ -136,17 +136,96 @@ nonisolated final class SampleAppUITests: XCTestCase {
 
         XCTAssertTrue(element(A11y.cachedRefreshScreen).waitForExistence(timeout: 3))
         XCTAssertTrue(element(A11y.entry(10)).waitForExistence(timeout: 2))
+        app.segmentedControls[A11y.cachedRefreshTiming].buttons["Manual"].tap()
 
-        app.buttons[A11y.cachedRefreshFailure].tap()
-        XCTAssertTrue(element(A11y.entry(10)).exists, "Seeded content disappeared during refresh")
+        tapCachedRefreshControl(A11y.cachedRefreshFailure)
+        revealCachedRefreshEntries()
+        XCTAssertTrue(element(A11y.retainedSource).exists)
+        XCTAssertFalse(element(A11y.placeholderSource).exists)
+        let retainedRow = app.buttons[A11y.cachedRefreshSelect(10)]
+        XCTAssertTrue(retainedRow.isEnabled, "Retained rows must stay interactive throughout refresh")
+        retainedRow.tap()
+        XCTAssertTrue(waitForLabelContaining("Row taps: 1", on: element(A11y.cachedRefreshRowTaps)))
+
+        tapCachedRefreshControl(A11y.cachedRefreshDeliver)
+        revealCachedRefreshEntries()
         XCTAssertTrue(waitForLabelContaining("refresh failed", on: app.staticTexts[A11y.cachedRefreshPhase]))
         XCTAssertTrue(element(A11y.entry(10)).exists, "Seeded content disappeared after failure")
+        XCTAssertTrue(retainedRow.isEnabled)
 
-        app.buttons[A11y.cachedRefreshSuccess].tap()
+        tapCachedRefreshControl(A11y.cachedRefreshSuccess)
+        tapCachedRefreshControl(A11y.cachedRefreshDeliver)
+        revealCachedRefreshEntries()
         XCTAssertTrue(element(A11y.entry(20)).waitForExistence(timeout: 3))
 
-        app.buttons[A11y.cachedRefreshDirect].tap()
+        tapCachedRefreshControl(A11y.cachedRefreshDirect)
+        revealCachedRefreshEntries()
         XCTAssertTrue(element(A11y.entry(200)).waitForExistence(timeout: 2))
+    }
+
+    @MainActor
+    func testConfirmedEmptySurvivesRefreshAndFailureUntilExplicitInvalidation() {
+        launch(.cachedRefresh)
+        XCTAssertTrue(element(A11y.entry(10)).waitForExistence(timeout: 3))
+        app.segmentedControls[A11y.cachedRefreshTiming].buttons["Manual"].tap()
+
+        tapCachedRefreshControl(A11y.cachedRefreshEmpty)
+        tapCachedRefreshControl(A11y.cachedRefreshDeliver)
+        revealCachedRefreshEntries()
+        XCTAssertTrue(element(A11y.cachedRefreshEmptyState).waitForExistence(timeout: 3))
+
+        tapCachedRefreshControl(A11y.cachedRefreshFailure)
+        revealCachedRefreshEntries()
+        XCTAssertTrue(element(A11y.cachedRefreshEmptyState).exists)
+        XCTAssertTrue(element(A11y.retainedSource).exists)
+        XCTAssertFalse(element(A11y.placeholderSource).exists)
+        tapCachedRefreshControl(A11y.cachedRefreshDeliver)
+        revealCachedRefreshEntries()
+        XCTAssertTrue(waitForLabelContaining("refresh failed", on: element(A11y.cachedRefreshPhase)))
+        XCTAssertTrue(element(A11y.cachedRefreshEmptyState).exists)
+
+        tapCachedRefreshControl(A11y.cachedRefreshSuccess)
+        revealCachedRefreshEntries()
+        XCTAssertTrue(element(A11y.cachedRefreshEmptyState).exists)
+        XCTAssertTrue(element(A11y.retainedSource).exists)
+        XCTAssertFalse(element(A11y.placeholderSource).exists)
+        tapCachedRefreshControl(A11y.cachedRefreshDeliver)
+        revealCachedRefreshEntries()
+        XCTAssertTrue(element(A11y.entry(20)).waitForExistence(timeout: 3))
+
+        tapCachedRefreshControl(A11y.cachedRefreshInvalidate)
+        revealCachedRefreshEntries()
+        XCTAssertTrue(element(A11y.placeholderSource).waitForExistence(timeout: 2))
+        XCTAssertFalse(element(A11y.entry(20)).exists)
+        // XCTest can still discover accessibility-hidden SwiftUI views. Verify the interaction contract directly.
+        XCTAssertFalse(app.buttons[A11y.cachedRefreshSelect(0)].isEnabled, "Skeleton rows must not be interactive")
+        tapCachedRefreshControl(A11y.cachedRefreshDeliver)
+        revealCachedRefreshEntries()
+        XCTAssertTrue(element(A11y.entry(20)).waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons[A11y.cachedRefreshSelect(20)].isEnabled)
+        XCTAssertFalse(element(A11y.placeholderSource).exists)
+    }
+
+    @MainActor
+    func testImmediateRefreshPublishesPopulatedAndEmptyResults() {
+        launch(.cachedRefresh)
+        XCTAssertTrue(element(A11y.entry(10)).waitForExistence(timeout: 3))
+        app.segmentedControls[A11y.cachedRefreshTiming].buttons["Fast"].tap()
+
+        tapCachedRefreshControl(A11y.cachedRefreshSuccess)
+        revealCachedRefreshEntries()
+        XCTAssertTrue(element(A11y.entry(20)).waitForExistence(timeout: 3))
+        XCTAssertFalse(element(A11y.placeholderSource).exists)
+
+        tapCachedRefreshControl(A11y.cachedRefreshEmpty)
+        revealCachedRefreshEntries()
+        XCTAssertTrue(element(A11y.cachedRefreshEmptyState).waitForExistence(timeout: 3))
+        XCTAssertFalse(element(A11y.placeholderSource).exists)
+
+        tapCachedRefreshControl(A11y.cachedRefreshSuccess)
+        revealCachedRefreshEntries()
+        XCTAssertTrue(element(A11y.entry(20)).waitForExistence(timeout: 3))
+        XCTAssertFalse(element(A11y.placeholderSource).exists)
     }
 
     @MainActor
@@ -281,7 +360,21 @@ nonisolated final class SampleAppUITests: XCTestCase {
 
     @MainActor
     private func element(_ identifier: String) -> XCUIElement {
-        app.descendants(matching: .any)[identifier]
+        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+    }
+
+    @MainActor
+    private func revealCachedRefreshEntries() {
+        app.swipeDown()
+        app.swipeDown()
+    }
+
+    @MainActor
+    private func tapCachedRefreshControl(_ identifier: String) {
+        let control = app.buttons[identifier]
+        scrollUntilHittable(control, direction: .up)
+        XCTAssertTrue(control.isEnabled)
+        control.tap()
     }
 
     @MainActor
@@ -344,6 +437,7 @@ private enum A11y {
     static let loadingLabFailsWhenComplete = "sample.loading-lab.fails-when-complete"
     static let loadingLabPhase = "sample.loading-lab.phase"
     static let placeholderSource = "sample.source.placeholder"
+    static let retainedSource = "sample.source.retained"
 
     static let screenReplacementFailure = "sample.screen-replacement.failure"
     static let screenReplacementRetry = "sample.screen-replacement.retry"
@@ -353,6 +447,13 @@ private enum A11y {
     static let cachedRefreshSuccess = "sample.cached-refresh.success"
     static let cachedRefreshFailure = "sample.cached-refresh.failure"
     static let cachedRefreshDirect = "sample.cached-refresh.direct"
+    static let cachedRefreshTiming = "sample.cached-refresh.timing"
+    static let cachedRefreshEmpty = "sample.cached-refresh.empty"
+    static let cachedRefreshEmptyState = "sample.cached-refresh.empty-state"
+    static let cachedRefreshInvalidate = "sample.cached-refresh.invalidate"
+    static let cachedRefreshDeliver = "sample.cached-refresh.deliver"
+    static let cachedRefreshRowTaps = "sample.cached-refresh.row-taps"
+    static func cachedRefreshSelect(_ id: Int) -> String { "sample.cached-refresh.select.\(id)" }
 
     static let animatedReorderingScreen = "sample.animated-reordering.screen"
     static let animatedReorderingReverse = "sample.animated-reordering.reverse"

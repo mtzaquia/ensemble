@@ -42,6 +42,42 @@ entire List; no additional List animation modifier is needed for its phase-drive
 Final-state UI tests do not prove motion; inspect the scenario directly in Simulator for that part
 of the contract.
 
+## Cached refresh
+
+Launch `UI_TESTING --scenario=cached-refresh` for deterministic UI assertions, or open Cached
+refresh from the catalog without `UI_TESTING` for normal interaction. The sample starts with seeded
+successful rows and uses `loading: .placeholder(...)` plus `failure: .retained`.
+
+1. Choose **Manual**, then **Refresh successfully**. The source badge becomes Retained. Read and
+   tap the existing rows: they stay visible and interactive for the entire request, with no timer
+   turning them into skeletons. The row-tap count confirms interaction.
+2. Choose **Deliver pending response**. The new result appears immediately with the Latest badge.
+3. Choose **Fast** and refresh again, then compare with **Slow** (two seconds). Both retain the
+   previous value until the producer publishes a result. These timings simulate source latency;
+   they do not delay results or control loading presentation inside Ensemble.
+4. Choose **Manual**, then **Load empty result** and deliver it. Refresh successfully again: the
+   confirmed-empty message remains visible with Retained until you deliver the populated result.
+   An empty collection is a successful value, not a reason to bring back placeholders.
+5. Refresh with failure and deliver it. Real content remains visible through failure. This also
+   works with the confirmed-empty result. A later successful refresh recovers the same binding.
+6. Choose **Invalidate and reload** in Manual mode. This action explicitly calls `reset()`;
+   placeholders and their badge appear immediately and placeholder row buttons are disabled.
+   Deliver the result to restore real, interactive content. Ordinary refresh never calls `reset()`.
+7. **Load one value** exercises an immediate one-shot load into the same destination without
+   replacing the long-lived subscription; response timing applies only to the stream controls.
+
+The List and controls stay mounted through content changes. The builder redacts and disables rows
+only for `source == .placeholder`; `.retained` always represents real data. In an app, reset only
+when the previous value is unsuitable, and cancel obsolete producers before they can publish into
+the invalidated destination. Do not redact retained rows based on the loading phase or elapsed time.
+See [the presentation guide](../docs/presentation-policies.md#keep-successful-content-visible-throughout-refresh)
+for the consumer pattern and troubleshooting.
+
+UI tests hold manual responses to inspect retained populated and empty content, row interaction,
+failure, recovery, and invalidation before completion. They also exercise immediate stream results.
+For transient flashes, record Fast and Slow refreshes without `UI_TESTING` and inspect intermediate
+frames. Settled screenshots and final-state assertions alone do not prove that no flash occurred.
+
 ## Validation
 
 Use the package tests for state, snapshot, and rendered-category semantics, then use XcodeBuildMCP

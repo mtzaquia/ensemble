@@ -183,6 +183,13 @@ Reset does not cancel an active load or binding. A later accepted update can rep
 state. Use `ViewDataContext.cancel(_:)` when the binding should stop, and cancel the task awaiting
 `load(_:to:)` when the one-shot operation should stop.
 
+Reserve reset for deliberate invalidation, such as changing accounts when the previous account's
+content must no longer be presented. Ordinary refresh uses `reload(_:)` or `load(_:to:)` with the
+same `ViewData` instance and preserves its successful value, including an empty collection.
+Cancel obsolete work when invalidating so it cannot restore an unsuitable value. See
+[Keep successful content visible throughout refresh](presentation-policies.md#keep-successful-content-visible-throughout-refresh)
+for the rendering contract.
+
 ## Handle completion and cancellation
 
 When a stream finishes without emitting while the destination is loading, the context restores a

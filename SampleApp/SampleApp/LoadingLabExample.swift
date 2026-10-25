@@ -57,6 +57,9 @@ struct LoadingLabExample: View {
                         failure: .retained
                     ) { _, source in
                         SampleSourceBadge(source: source)
+                    } failure: { _, _ in
+                        // Match the rows' failure-aware retry policy; a visible failure is not placeholder content.
+                        EmptyView()
                     }
                 }
             } footer: {

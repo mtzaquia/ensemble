@@ -28,61 +28,41 @@ struct CachedRefreshExample: View {
     @State private var viewModel = CachedRefreshViewModel()
 
     var body: some View {
-        AsyncContent(
-            viewModel.entries,
-            loading: .placeholder(SampleEntry.placeholders),
-            failure: .retained
-        ) { entries, source in
-            List {
+        // The List, controls, and task stay mounted even when content is invalidated or fails.
+        List {
+            AsyncContent(
+                viewModel.entries,
+                loading: .placeholder(SampleEntry.placeholders),
+                failure: .retained
+            ) { entries, source in
+                CachedRefreshEntries(
+                    entries: entries,
+                    source: source,
+                    phaseDescription: viewModel.phaseDescription,
+                    rowTaps: viewModel.rowTaps,
+                    onSelect: { viewModel.rowTaps += 1 }
+                )
+            } failure: { error, retry in
                 Section {
-                    SampleEntryRows(entries: entries, source: source)
-                } header: {
-                    HStack {
-                        Text("Entries")
-                        Spacer()
-                        SampleSourceBadge(source: source)
-                    }
-                } footer: {
-                    Text(viewModel.phaseDescription)
-                        .accessibilityIdentifier(SampleAppAccessibility.cachedRefreshPhase)
-                }
-
-                Section("Actions") {
-                    Button("Refresh successfully") {
-                        viewModel.refreshSuccessfully()
-                    }
-                    .accessibilityIdentifier(SampleAppAccessibility.cachedRefreshSuccess)
-                    Button("Refresh with failure") {
-                        viewModel.refreshWithFailure()
-                    }
-                    .accessibilityIdentifier(SampleAppAccessibility.cachedRefreshFailure)
-                    Button("Load one value") {
-                        viewModel.loadOneValue()
-                    }
-                    .accessibilityIdentifier(SampleAppAccessibility.cachedRefreshDirect)
-                }
-
-                Section("What this shows") {
-                    Label("ViewData starts with seeded content", systemImage: "1.circle")
-                    Label("Placeholder policy prefers the retained value", systemImage: "2.circle")
-                    Label("One binding observes the long-lived stream", systemImage: "3.circle")
-                    Label("Reload signals the existing producer", systemImage: "4.circle")
-                    Label("Failure can keep rendering the retained value", systemImage: "5.circle")
-                    Label("A one-shot load can update it in tandem", systemImage: "6.circle")
+                    SampleInlineFailure(
+                        title: "No retained entries",
+                        error: error,
+                        retry: retry,
+                        identifier: "cached-refresh"
+                    )
                 }
             }
-            .accessibilityIdentifier(SampleAppAccessibility.cachedRefreshScreen)
-        } failure: { error, retry in
-            ContentUnavailableView {
-                Label("No retained entries", systemImage: "externaldrive.badge.exclamationmark")
-            } description: {
-                Text(error.localizedDescription)
-            } actions: {
-                if let retry {
-                    Button("Try again") { retry() }
-                }
+
+            CachedRefreshControls(viewModel: viewModel)
+
+            Section("What this shows") {
+                Text("Refresh keeps real rows readable and interactive until the next result, however long it takes.")
+                Text("A successful empty result is retained too. Only invalidation brings back the initial placeholders.")
+                Text("Timing controls the local stream producer. Ensemble never delays presentation or results.")
+                Text("One binding observes a long-lived stream; a one-shot load can update the same ViewData in tandem.")
             }
         }
+        .accessibilityIdentifier(SampleAppAccessibility.cachedRefreshScreen)
         .navigationTitle("Cached refresh")
         .task {
             viewModel.start()
@@ -90,20 +70,125 @@ struct CachedRefreshExample: View {
     }
 }
 
+private struct CachedRefreshEntries: View {
+    let entries: [SampleEntry]
+    let source: AsyncContentSource
+    let phaseDescription: String
+    let rowTaps: Int
+    let onSelect: () -> Void
+
+    var body: some View {
+        Section {
+            if entries.isEmpty {
+                Text("No entries. This is a successful empty result.")
+                    .accessibilityIdentifier(SampleAppAccessibility.cachedRefreshEmptyState)
+            }
+
+            ForEach(entries) { entry in
+                Button(action: onSelect) {
+                    SampleEntryRow(entry: entry)
+                }
+                .buttonStyle(.plain)
+                // Retained content is real data, not a loading skeleton.
+                .redacted(reason: source == .placeholder ? .placeholder : [])
+                .disabled(source == .placeholder)
+                .accessibilityHidden(source == .placeholder)
+                .accessibilityIdentifier(SampleAppAccessibility.cachedRefreshSelect(entry.id))
+            }
+        } header: {
+            HStack {
+                Text("Entries")
+                Spacer()
+                SampleSourceBadge(source: source)
+            }
+        } footer: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(phaseDescription)
+                    .accessibilityIdentifier(SampleAppAccessibility.cachedRefreshPhase)
+                Text("Row taps: \(rowTaps)")
+                    .accessibilityIdentifier(SampleAppAccessibility.cachedRefreshRowTaps)
+            }
+        }
+    }
+}
+
+private struct CachedRefreshControls: View {
+    let viewModel: CachedRefreshViewModel
+
+    var body: some View {
+        @Bindable var viewModel = viewModel
+
+        Section {
+            Picker("Response timing", selection: $viewModel.timing) {
+                ForEach(CachedRefreshTiming.allCases) { timing in
+                    Text(timing.rawValue).tag(timing)
+                }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier(SampleAppAccessibility.cachedRefreshTiming)
+            .disabled(viewModel.isLoading)
+
+            Group {
+                Button("Refresh successfully", action: viewModel.refreshSuccessfully)
+                    .accessibilityIdentifier(SampleAppAccessibility.cachedRefreshSuccess)
+                Button("Refresh with failure", action: viewModel.refreshWithFailure)
+                    .accessibilityIdentifier(SampleAppAccessibility.cachedRefreshFailure)
+                Button("Load empty result", action: viewModel.refreshToEmpty)
+                    .accessibilityIdentifier(SampleAppAccessibility.cachedRefreshEmpty)
+                Button("Invalidate and reload", action: viewModel.invalidateAndReload)
+                    .accessibilityIdentifier(SampleAppAccessibility.cachedRefreshInvalidate)
+                Button("Load one value", action: viewModel.loadOneValue)
+                    .accessibilityIdentifier(SampleAppAccessibility.cachedRefreshDirect)
+            }
+            .disabled(viewModel.isLoading)
+
+            if viewModel.timing == .manual {
+                Button("Deliver pending response", action: viewModel.deliverPendingResponse)
+                    .disabled(!viewModel.hasPendingResponse)
+                    .accessibilityIdentifier(SampleAppAccessibility.cachedRefreshDeliver)
+            }
+        } header: {
+            Text("Refresh controls")
+        } footer: {
+            Text("Fast responds immediately; Slow waits two seconds. Manual holds the response until you deliver it.")
+        }
+    }
+}
+
+private enum CachedRefreshTiming: String, CaseIterable, Identifiable {
+    case fast = "Fast"
+    case slow = "Slow"
+    case manual = "Manual"
+
+    var id: Self { self }
+}
+
 @Observable
 private final class CachedRefreshViewModel {
     let entries = ViewData(SampleEntry.cached)
+    var timing = CachedRefreshTiming.slow
+    var rowTaps = 0
 
     @ObservationIgnored private let context = ViewDataContext()
     @ObservationIgnored private let useCase = CachedRefreshUseCase()
     @ObservationIgnored private var hasStarted = false
 
+    var isLoading: Bool { entries.phase.kind == .loading }
+    var hasPendingResponse: Bool { useCase.hasPendingResponse }
+
     var phaseDescription: String {
         switch entries.phase {
         case .empty:
-            "No value is available."
+            "Invalidated: no successful value is available, so placeholders appear immediately."
         case .loading:
-            "A refresh is running while the seeded value remains visible."
+            switch entries.latestValue {
+            case .unavailable:
+                "Loading without a successful value: placeholders appear immediately."
+            case .available(let entries) where entries.isEmpty:
+                "Refreshing: the successful empty state stays visible until the next result."
+            case .available:
+                "Refreshing: real rows stay visible and interactive until the next result."
+            }
         case .success:
             "The current value is the latest successful update."
         case .failure:
@@ -122,12 +207,31 @@ private final class CachedRefreshViewModel {
     }
 
     func refreshSuccessfully() {
-        useCase.prepare(.success(SampleEntry.refreshed))
-        context.reload(entries)
+        refresh(with: .success(SampleEntry.refreshed))
     }
 
     func refreshWithFailure() {
-        useCase.prepare(.failure(.offline))
+        refresh(with: .failure(.offline))
+    }
+
+    func refreshToEmpty() {
+        refresh(with: .success([]))
+    }
+
+    func invalidateAndReload() {
+        // Unlike refresh, invalidation deliberately discards the last successful value.
+        // Controls exclude overlapping work in this fixture; real apps must cancel stale producers.
+        entries.reset()
+        refreshSuccessfully()
+    }
+
+    func deliverPendingResponse() {
+        useCase.deliverPendingResponse()
+    }
+
+    private func refresh(with update: CachedRefreshUseCase.Update) {
+        useCase.prepare(update, timing: timing)
+        // Reload the same destination. Do not reset it or redact retained content.
         context.reload(entries)
     }
 
@@ -147,13 +251,17 @@ private final class CachedRefreshViewModel {
     }
 }
 
+@Observable
 private final class CachedRefreshUseCase {
     typealias Update = Result<[SampleEntry], SampleFailure>
 
-    private let stream: AsyncStream<Update>
-    private let continuation: AsyncStream<Update>.Continuation
-    private var nextUpdate: Update = .success(SampleEntry.cached)
-    private var reloadTask: Task<Void, Never>?
+    private(set) var hasPendingResponse = false
+    @ObservationIgnored private let stream: AsyncStream<Update>
+    @ObservationIgnored private let continuation: AsyncStream<Update>.Continuation
+    @ObservationIgnored private var nextUpdate: Update = .success(SampleEntry.cached)
+    @ObservationIgnored private var timing = CachedRefreshTiming.slow
+    @ObservationIgnored private var pendingUpdate: Update?
+    @ObservationIgnored private var reloadTask: Task<Void, Never>?
 
     init() {
         let (stream, continuation) = AsyncStream<Update>.makeStream()
@@ -166,23 +274,40 @@ private final class CachedRefreshUseCase {
         stream
     }
 
-    func prepare(_ update: Update) {
+    func prepare(_ update: Update, timing: CachedRefreshTiming) {
         nextUpdate = update
+        self.timing = timing
     }
 
     func reload() {
         reloadTask?.cancel()
-        let update = nextUpdate
-        reloadTask = Task { @MainActor [weak self] in
-            do {
-                try await Task.sleep(for: .milliseconds(700))
-            } catch {
-                return
-            }
+        pendingUpdate = nextUpdate
+        hasPendingResponse = true
 
-            guard let self, Task.isCancelled == false else { return }
-            continuation.yield(update)
-            reloadTask = nil
+        switch timing {
+        case .fast:
+            deliverPendingResponse()
+        case .slow:
+            reloadTask = Task { @MainActor [weak self] in
+                do {
+                    try await Task.sleep(for: .seconds(2))
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                self?.deliverPendingResponse()
+            }
+        case .manual:
+            break
         }
+    }
+
+    func deliverPendingResponse() {
+        guard let update = pendingUpdate else { return }
+        reloadTask?.cancel()
+        reloadTask = nil
+        pendingUpdate = nil
+        hasPendingResponse = false
+        continuation.yield(update)
     }
 }

@@ -53,7 +53,7 @@ enum SampleScenario: String, CaseIterable, Identifiable {
         case .screenReplacement:
             "Placeholder loading, a blocking failure, and retry."
         case .cachedRefresh:
-            "Seeded data remains visible through loading and failure."
+            "Keep populated and empty results through refresh; invalidate to restore placeholders."
         case .animatedReordering:
             "Presentation transitions and consumer-owned stable-ID row animation."
         case .independentSections:
@@ -132,6 +132,13 @@ enum SampleAppAccessibility {
     static let cachedRefreshSuccess = "sample.cached-refresh.success"
     static let cachedRefreshFailure = "sample.cached-refresh.failure"
     static let cachedRefreshDirect = "sample.cached-refresh.direct"
+    static let cachedRefreshTiming = "sample.cached-refresh.timing"
+    static let cachedRefreshEmpty = "sample.cached-refresh.empty"
+    static let cachedRefreshEmptyState = "sample.cached-refresh.empty-state"
+    static let cachedRefreshInvalidate = "sample.cached-refresh.invalidate"
+    static let cachedRefreshDeliver = "sample.cached-refresh.deliver"
+    static let cachedRefreshRowTaps = "sample.cached-refresh.row-taps"
+    static func cachedRefreshSelect(_ id: Int) -> String { "sample.cached-refresh.select.\(id)" }
 
     static let animatedReorderingScreen = "sample.animated-reordering.screen"
     static let animatedReorderingReverse = "sample.animated-reordering.reverse"

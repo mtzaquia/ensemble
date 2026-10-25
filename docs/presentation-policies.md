@@ -44,6 +44,74 @@ layout pass. When retry begins from visible failure content, that failure stays 
 source produces another success or failure. Retained or placeholder loading content does not
 replace the failure in between.
 
+### Keep successful content visible throughout refresh
+
+`.placeholder(value)` is a fallback when no suitable successful value exists. It does not replace
+retained content when a refresh starts, even when the request is slow. Both `load(_:to:)` and
+`reload(_:)` preserve the destination's latest successful value while changing its phase to loading.
+
+Redact and disable only content whose `source` is `.placeholder`. A `.retained` value is real,
+successful data and can remain readable and interactive during refresh or recoverable failure:
+
+```swift
+AsyncContent(
+  viewModel.entries,
+  loading: .placeholder(Entry.placeholders),
+  failure: .retained
+) { entries, source in
+  List {
+    if entries.isEmpty {
+      Text("No entries")
+    }
+
+    ForEach(entries) { entry in
+      Button {
+        viewModel.select(entry)
+      } label: {
+        EntryRow(entry: entry)
+      }
+      .redacted(reason: source == .placeholder ? .placeholder : [])
+      .disabled(source == .placeholder)
+      .accessibilityHidden(source == .placeholder)
+    }
+  }
+}
+```
+
+A successfully loaded empty collection stays an empty state during refresh; it is not a reason to
+show skeleton rows. With `unwrapping:`, a successful `nil` cannot supply content to the builder,
+so an explicit placeholder can still be used while loading. See [Render optional values](#render-optional-values).
+
+| Situation with `.placeholder(value)` | Builder input |
+| --- | --- |
+| Before the first result, including the first layout pass | Supplied placeholder, `.placeholder` |
+| Refresh with a previous successful value, for the entire request | Previous value, `.retained` |
+| Refresh with a previous successful empty collection | Empty collection, `.retained` |
+| New successful result | New value, `.latest` |
+| Explicit reset with no subsequent result | Supplied placeholder, `.placeholder` |
+
+Keep the same `ViewData` instance in a stable owner across refreshes. Reload the existing binding,
+or load into that same destination. Do not call `reset()`, recreate `ViewData`, or replace its
+successful value with an artificial empty collection merely because another request started.
+Use `reset()` when the old value is no longer suitable, such as when switching accounts. That
+deliberate invalidation removes retention and restores the initial fallback immediately. Reset
+does not cancel work; cancel or supersede obsolete producers so they cannot repopulate the destination
+with an invalid value. See [Sources and lifecycle](sources-and-lifecycle.md#seed-and-reset-state).
+
+If useful data appears to disappear on refresh, inspect the builder too: redacting on
+`phase.kind == .loading`, `source != .latest`, or an app-owned loading flag hides retained content
+even though Ensemble still supplies it. Do not replace a retained empty result with placeholders
+based on `entries.isEmpty`.
+
+An optional refresh spinner or pagination indicator is separate from the retained content. A short,
+cancellable presentation grace can suppress flashes of that additional indicator, but it should
+not delay requests or results, postpone initial placeholders, or turn retained rows into skeletons.
+For pagination, keep existing rows interactive and place any loading feedback in a separate region.
+Ensemble does not impose a feedback delay or a minimum spinner duration.
+
+The sample app's [Cached refresh scenario](../SampleApp/README.md#cached-refresh) demonstrates fast,
+slow, and manually completed refreshes, retained empty results, failure, and explicit invalidation.
+
 ### Choose failure behavior
 
 An initializer with a failure builder accepts `AsyncContentFailurePolicy`:
@@ -245,5 +313,11 @@ List {
 ```
 
 The container remains mounted while each region resolves its own category and animation boundary.
+
+Keep a region's source badge in the same content builder when possible, as the Cached refresh
+sample does. Separate `AsyncContent` instances resolve their own policies; a badge describing
+another instance must match its loading and failure rules, including whether it has a failure
+builder. Otherwise the badge can report placeholders during retry while the actual region still
+shows its previous failure.
 
 Next: [Getting started](getting-started.md) · [Sources and lifecycle](sources-and-lifecycle.md)

@@ -90,5 +90,13 @@ value while loading or failed. An empty collection is still a success; render it
 inside the success builder. See [Presentation policies](presentation-policies.md) for placeholders,
 failure UI, and retry.
 
+For first-load skeletons, pass `loading: .placeholder(Entry.placeholders)` and redact only when
+the builder's `source == .placeholder`. Refreshes continue supplying real content as `.retained`,
+including a successful empty collection. Keep that content visible and interactive until the next
+result; neither a loading phase nor `.retained` means it should become a skeleton. Keep the same
+`ViewData` instance and reserve `reset()` for deliberate invalidation, not ordinary refresh.
+See [Keep successful content visible throughout refresh](presentation-policies.md#keep-successful-content-visible-throughout-refresh)
+for the complete pattern and troubleshooting.
+
 Next: [Presentation policies](presentation-policies.md) ·
 [Sources and lifecycle](sources-and-lifecycle.md)
