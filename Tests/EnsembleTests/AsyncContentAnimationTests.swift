@@ -105,7 +105,7 @@ struct AsyncContentAnimationTests {
 
     @Test("Same-phase List updates inherit the caller animation instead of the phase animation")
     func listSamePhaseChanges() async throws {
-        let data = ViewData([1])
+        let data = ViewData(.available([1]))
         let marker = ListMovementProbe()
         let host = makeHost(ListAnimationFixture(data: data, marker: marker, animation: .snappy))
         let window = show(host)
@@ -123,7 +123,7 @@ struct AsyncContentAnimationTests {
 
     @Test("Phase animation reaches List removals when content becomes hidden")
     func listContentRemoval() async throws {
-        let data = ViewData([1, 2, 3])
+        let data = ViewData(.available([1, 2, 3]))
         let marker = ListMovementProbe()
         let host = makeHost(ListAnimationFixture(data: data, marker: marker, animation: .snappy))
         let window = show(host)
@@ -255,7 +255,7 @@ struct AsyncContentAnimationTests {
 
     @Test("Nested async content inherits configuration and animates its own phase independently")
     func nestedAsyncContent() async throws {
-        let outer = ViewData(1)
+        let outer = ViewData(.available(1))
         let inner = ViewData<Int>()
         let probe = AnimationProbe()
         let host = makeHost(
@@ -395,7 +395,7 @@ private final class AnimationProbe {
 
 private struct AnimationFixture: View {
     let data = ViewData<Int>()
-    let sibling = ViewData(0)
+    let sibling = ViewData(.available(0))
     let primary = AnimationProbe()
     let secondary = AnimationProbe()
     let inherited = AnimationProbe()

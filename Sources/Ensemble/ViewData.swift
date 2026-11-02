@@ -227,16 +227,22 @@ public final class ViewData<Value> {
         )
     }
 
-    /// Creates successful presentation state with an initial value.
+    /// Creates presentation state from an initial value's availability.
     ///
-    /// The value is immediately available through ``latestValue`` and the initial ``phase`` is
-    /// ``Phase/success``. Binding a source later preserves this value while the source is loading.
+    /// An available value is immediately exposed through ``latestValue`` with a successful
+    /// ``phase``. This includes empty collections and successful `nil` results for optional values.
+    /// Binding a source later preserves the value while the source is loading. Unavailable input
+    /// creates empty presentation state, just like ``init()``.
     ///
-    /// - Parameter value: The value to expose to observers from creation.
-    public init(_ value: Value) {
+    /// - Parameter initialValue: The successful value, if any, to expose from creation.
+    public init(_ initialValue: ViewDataAvailability<Value>) {
+        let phase: Phase = switch initialValue {
+        case .unavailable: .empty
+        case .available: .success
+        }
         self.rawPresentation = Presentation(
-            phase: .success,
-            latestValue: .available(value)
+            phase: phase,
+            latestValue: initialValue
         )
     }
 

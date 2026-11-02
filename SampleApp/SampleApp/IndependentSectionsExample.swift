@@ -120,7 +120,7 @@ struct IndependentSectionsExample: View {
 @Observable
 private final class IndependentSectionsViewModel {
     let activity = ViewData<[SampleEntry]>()
-    let account = ViewData(SampleEntry.cached)
+    let account = ViewData(.available(SampleEntry.cached))
     let tip = ViewData<String>()
 
     @ObservationIgnored private let context = ViewDataContext()

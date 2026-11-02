@@ -72,7 +72,7 @@ struct AsyncContentTests {
             Text("\(value)")
         }
 
-        let optionalData = ViewData<Int?>(42)
+        let optionalData = ViewData<Int?>(.available(42))
 
         _ = AsyncContent(unwrapping: optionalData) { value, _ in
             Text("\(value)")
@@ -88,7 +88,7 @@ struct AsyncContentTests {
     @Test("The phase animation modifier composes across every initializer family")
     func phaseAnimationModifierComposes() {
         let data = ViewData<Int>()
-        let optionalData = ViewData<Int?>(42)
+        let optionalData = ViewData<Int?>(.available(42))
 
         for animation in [Animation.default, nil] {
             _ = AsyncContent(data) { value, _ in
@@ -119,7 +119,7 @@ struct AsyncContentTests {
 
     @Test("Constructing AsyncContent does not observe presentation state")
     func constructionDoesNotObservePresentation() {
-        let data = ViewData(1)
+        let data = ViewData(.available(1))
         let observation = ObservationCounter()
 
         observation.track {
@@ -136,7 +136,7 @@ struct AsyncContentTests {
 
     @Test("AsyncContent observation forwards accepted presentation changes")
     func bodyObservesPresentation() {
-        let data = ViewData(1)
+        let data = ViewData(.available(1))
         let content = AsyncContentObservation()
         content.bind(to: data, animation: nil)
         let observation = ObservationCounter()
@@ -152,8 +152,8 @@ struct AsyncContentTests {
 
     @Test("AsyncContent observation rebinds without duplicate or stale notifications")
     func observationRebinding() {
-        let first = ViewData(1)
-        let second = ViewData(2)
+        let first = ViewData(.available(1))
+        let second = ViewData(.available(2))
         let observation = AsyncContentObservation()
         observation.bind(to: first, animation: .snappy)
         observation.bind(to: first, animation: nil)
@@ -172,13 +172,13 @@ struct AsyncContentTests {
         let observation = AsyncContentObservation()
         weak var weakData: ViewData<Int>?
         do {
-            let data = ViewData(1)
+            let data = ViewData(.available(1))
             weakData = data
             observation.bind(to: data, animation: nil)
         }
         #expect(weakData == nil)
 
-        let data = ViewData(1)
+        let data = ViewData(.available(1))
         weak var weakObservation: AsyncContentObservation?
         do {
             let temporary = AsyncContentObservation()
@@ -191,7 +191,7 @@ struct AsyncContentTests {
 
     @Test("AsyncContent resolves the current presentation")
     func resolvesCurrentPresentation() throws {
-        let data = ViewData(1)
+        let data = ViewData(.available(1))
         let content = AsyncContent(data) { value, _ in
             Text("\(value)")
         }
@@ -260,7 +260,7 @@ struct AsyncContentTests {
 
     @Test("Optional rendering uses the underlying lifecycle phase even when hidden or retained")
     func optionalPresentationPhase() {
-        let data = ViewData<Int?>(nil)
+        let data = ViewData<Int?>(.available(nil))
         let content = AsyncContent(unwrapping: data, failure: .retained) { value, _ in
             Text("\(value)")
         }
@@ -294,7 +294,7 @@ struct AsyncContentTests {
 
     @Test("Failure policies map to the category actually rendered")
     func failurePolicyCategories() {
-        let data = ViewData(42)
+        let data = ViewData(.available(42))
         data.fail(TestError.expected)
 
         let retained = AsyncContent(data, failure: .retained) { value, _ in
@@ -344,7 +344,7 @@ struct AsyncContentTests {
 
     @Test("Unwrapping renders a non-optional latest value")
     func unwrappingLatestValue() throws {
-        let data = ViewData<Int?>(42)
+        let data = ViewData<Int?>(.available(42))
         let content = AsyncContent(unwrapping: data) { value, _ in
             Text("\(value)")
         }
@@ -356,7 +356,7 @@ struct AsyncContentTests {
 
     @Test("Unwrapping omits a successful nil value")
     func unwrappingNilValue() {
-        let data = ViewData<Int?>(nil)
+        let data = ViewData<Int?>(.available(nil))
         let content = AsyncContent(unwrapping: data) { value, _ in
             Text("\(value)")
         }
@@ -366,7 +366,7 @@ struct AsyncContentTests {
 
     @Test("The standard initializer preserves a successful optional nil")
     func standardInitializerPreservesOptionalNil() throws {
-        let data = ViewData<Int?>(nil)
+        let data = ViewData<Int?>(.available(nil))
         let content = AsyncContent(data) { value, _ in
             Text("\(String(describing: value))")
         }
@@ -414,7 +414,7 @@ struct AsyncContentTests {
 
     @Test("Unwrapping treats a retained nil as unavailable while loading")
     func unwrappingRetainedNilWhileLoading() {
-        let data = ViewData<Int?>(nil)
+        let data = ViewData<Int?>(.available(nil))
         data.beginLoading()
 
         let content = AsyncContent(unwrapping: data) { value, _ in
@@ -425,7 +425,7 @@ struct AsyncContentTests {
 
     @Test("Unwrapping can render an explicit placeholder for a retained nil")
     func unwrappingPlaceholderForNil() throws {
-        let data = ViewData<Int?>(nil)
+        let data = ViewData<Int?>(.available(nil))
         data.beginLoading()
 
         let content = AsyncContent(
@@ -442,7 +442,7 @@ struct AsyncContentTests {
 
     @Test("Unwrapping treats a retained nil as unavailable after failure")
     func unwrappingRetainedNilAfterFailure() throws {
-        let data = ViewData<Int?>(nil)
+        let data = ViewData<Int?>(.available(nil))
         data.fail(TestError.expected)
 
         let content = AsyncContent(

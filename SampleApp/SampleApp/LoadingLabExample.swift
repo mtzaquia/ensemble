@@ -221,7 +221,7 @@ private enum LoadingLabRequestStage: String, CaseIterable, Identifiable {
 
 @Observable
 private final class LoadingLabViewModel {
-    let entries = ViewData<[SampleEntry]?>(SampleEntry.cached)
+    let entries = ViewData<[SampleEntry]?>(.available(SampleEntry.cached))
 
     var duration = 3.0
     private(set) var shouldFail = false

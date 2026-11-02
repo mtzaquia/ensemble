@@ -37,11 +37,32 @@ struct ViewDataTests {
 
     @Test("An initial value starts as successful presentation state")
     func initialValue() {
-        let data = ViewData(42)
+        let data = ViewData(.available(42))
 
         #expect(data.isSuccessful)
         #expect(data.latestValue == .available(42))
         #expect(data.phase.kind == .success)
+    }
+
+    @Test("Unavailable initialization starts empty and accepts a later value")
+    func unavailableInitialValue() {
+        let data = ViewData<Int?>(.unavailable)
+
+        #expect(data.isEmpty)
+        #expect(data.latestValue == .unavailable)
+
+        data.set(nil)
+
+        #expect(data.isSuccessful)
+        #expect(data.latestValue == .available(nil))
+    }
+
+    @Test("An available empty collection starts successful")
+    func emptyInitialValue() {
+        let data = ViewData<[Int]>(.available([]))
+
+        #expect(data.isSuccessful)
+        #expect(data.latestValue == .available([]))
     }
 
     @Test("Phase kind omits the failure's associated error")
@@ -74,7 +95,7 @@ struct ViewDataTests {
 
     @Test("Initial-value construction does not artificially advance the revision")
     func initialValueRevision() {
-        let data = ViewData(1)
+        let data = ViewData(.available(1))
         let initial = data.latestValueRevision
 
         data.beginLoading()
@@ -113,7 +134,7 @@ struct ViewDataTests {
 
     @Test("An optional nil is an available successful value")
     func optionalNilAvailability() {
-        let data = ViewData<Int?>(nil)
+        let data = ViewData<Int?>(.available(nil))
 
         #expect(data.isSuccessful)
         #expect(data.latestValue == .available(nil))
@@ -137,7 +158,7 @@ struct ViewDataTests {
 
     @Test("Unequal replacements advance while successful, loading, or failed")
     func unequalReplacementsAdvanceRevision() {
-        let data = ViewData(1)
+        let data = ViewData(.available(1))
         let initial = data.latestValueRevision
 
         data.set(2)
@@ -170,7 +191,7 @@ struct ViewDataTests {
 
         let initial = Model(id: 42)
         let replacement = Model(id: 42)
-        let data = ViewData(initial)
+        let data = ViewData(.available(initial))
         let latestValueRevision = data.latestValueRevision
         let presentationRevision = data.presentationRevision
         let observation = ViewDataPresentationObservation(data)
@@ -190,7 +211,7 @@ struct ViewDataTests {
 
     @Test("Equal recovery from loading or failure does not advance")
     func equalRecoveryDoesNotAdvanceRevision() {
-        let data = ViewData(42)
+        let data = ViewData(.available(42))
         let initial = data.latestValueRevision
 
         data.beginLoading()
@@ -206,7 +227,7 @@ struct ViewDataTests {
 
     @Test("Lifecycle, failure, retry, and finish-loading changes do not advance")
     func lifecycleDoesNotAdvanceRevision() {
-        let data = ViewData(42)
+        let data = ViewData(.available(42))
         let initial = data.latestValueRevision
 
         let token = data.beginLoading()
@@ -225,7 +246,7 @@ struct ViewDataTests {
 
     @Test("Reset and the first value after reset do not advance")
     func resetDoesNotAdvanceRevision() {
-        let data = ViewData(1)
+        let data = ViewData(.available(1))
         data.set(2)
         let changed = data.latestValueRevision
 
@@ -239,7 +260,7 @@ struct ViewDataTests {
 
     @Test("Available optional nil follows equality semantics")
     func optionalNilRevision() {
-        let data = ViewData<Int?>(nil)
+        let data = ViewData<Int?>(.available(nil))
         let initial = data.latestValueRevision
 
         data.set(nil)
@@ -265,7 +286,7 @@ struct ViewDataTests {
 
     @Test("A successful update invalidates presentation coherently")
     func successfulUpdateIsCoherent() {
-        let data = ViewData([1, 2, 3])
+        let data = ViewData(.available([1, 2, 3]))
         let initialLatestValueRevision = data.latestValueRevision
         let initialPresentationRevision = data.presentationRevision
         let observation = ViewDataPresentationObservation(data)
@@ -591,7 +612,7 @@ struct ViewDataTests {
 
     @Test("A load presents failure while preserving the latest value")
     func loadFailure() async {
-        let data = ViewData(41)
+        let data = ViewData(.available(41))
         let context = ViewDataContext()
 
         await context.load({ () async throws -> Int in
@@ -631,7 +652,7 @@ struct ViewDataTests {
     @Test("Reset clears presentation without cancelling a binding")
     func resetPreservesBinding() async {
         let (source, continuation) = AsyncStream<Result<Int, TestError>>.makeStream()
-        let data = ViewData(41)
+        let data = ViewData(.available(41))
         let context = ViewDataContext()
 
         context.bind({ source }, to: data)
@@ -872,7 +893,7 @@ struct ViewDataTests {
     @Test("A source that completes without another result restores retained success")
     func emptyRefreshPreservesSuccess() async {
         let (stream, continuation) = AsyncStream<Result<Int, TestError>>.makeStream()
-        let data = ViewData(42)
+        let data = ViewData(.available(42))
         let context = ViewDataContext()
 
         context.bind({ stream }, to: data)

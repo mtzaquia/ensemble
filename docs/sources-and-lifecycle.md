@@ -167,11 +167,27 @@ intentional.
 Initialize `ViewData` with a value when useful content exists before any source starts:
 
 ```swift
-let entries = ViewData(cachedEntries)
+let entries = ViewData(.available(cachedEntries))
 ```
 
 The initial phase is successful. If a load or source starts later, the seeded value remains
-available as retained content while loading or after failure.
+available as retained content while loading or after failure. Seed the value in the view model's
+initializer so it is available for the first render, before any asynchronous work begins.
+
+Pass availability directly when a cached value may or may not exist:
+
+```swift
+let initialValue: ViewDataAvailability<[Entry]> = cachedEntries
+  .map { .available($0) } ?? .unavailable
+let entries = ViewData(initialValue)
+```
+
+`.unavailable` creates empty state, like `ViewData<[Entry]>()`. An available empty collection is a
+successful result, and `ViewData<Profile?>(.available(nil))` represents a successful result with no
+profile. These remain distinct from having no successful value.
+
+The initializer now accepts `ViewDataAvailability<Value>` instead of `Value`; migrate existing
+`ViewData(value)` calls to `ViewData(.available(value))`.
 
 Reset presentation when both the lifecycle phase and retained value should be discarded:
 

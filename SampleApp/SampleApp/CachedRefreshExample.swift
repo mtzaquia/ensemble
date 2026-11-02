@@ -165,7 +165,7 @@ private enum CachedRefreshTiming: String, CaseIterable, Identifiable {
 
 @Observable
 private final class CachedRefreshViewModel {
-    let entries = ViewData(SampleEntry.cached)
+    let entries = ViewData(.available(SampleEntry.cached))
     var timing = CachedRefreshTiming.slow
     var rowTaps = 0
 
