@@ -4,6 +4,10 @@ The sample app is a UI/platform showcase for `ViewData` and `AsyncContent`. Each
 keeps its state local, uses deterministic fixtures, and places the explanation beside the behavior
 it demonstrates.
 
+All stream-backed models declare their sources at initialization. `AsyncContent` manages their
+observation, and the models reload directly through their data properties. One-shot examples use
+`await entries.load(...)`; no separate context or binding-start method is required.
+
 ## Run a scenario
 
 Open `SampleApp/SampleApp.xcodeproj` and run the `SampleApp` scheme on an iOS 17 or newer
@@ -15,6 +19,34 @@ UI_TESTING --scenario=animated-reordering
 
 The `UI_TESTING` flag disables platform animations for deterministic final-state assertions. Omit it
 for manual inspection of transitions.
+
+## Source lifecycle (v3 prototype)
+
+Launch `UI_TESTING --scenario=source-lifecycle` or select **Source lifecycle** from the catalog.
+The model uses source-aware `ViewData` initialization. A separate model demonstrates
+`@ViewDataSource` without a context, lifecycle method, model-level macro, or projected value.
+
+1. The first source exposes cached rows immediately.
+2. Choose **Swap source**. The model keeps its successful value in the same instance, and the
+   view shows those rows with a Retained badge instead of placeholders.
+3. Choose **Fail response** to retain those rows through failure, then **Reload** and
+   **Deliver response** to recover with the new source's rows.
+4. Choose **Show macro source** and scroll its rows into view. Its connection count changes from
+   zero only when rendered.
+5. Hide that consumer to release its lease; SwiftUI may retain state for offscreen list rows, so
+   visibility alone is not the source-lifetime contract.
+
+| Promise | Evidence | Primary proof |
+| --- | --- | --- |
+| Seeds are synchronous; factories are lazy | Cached rows before connection; macro count starts at zero | Package tests and sample UI test |
+| An empty renderer still activates its source | Hidden source delivers without an ancestor task | Hosted SwiftUI test |
+| Source replacement retains real model data | Old rows remain available in the model throughout the request | Package, hosted List, and sample UI tests |
+| Leases share work and cancel after their last consumer | One connection for two observers, no binding after cancellation | Package tests |
+| Macro-generated owners are weak | Model deallocates while data is independently observed | Package test |
+
+The source-aware initializer is the simplest path for observable models. The prototype's property
+macro requires `@ObservationIgnored` after its annotation when used inside an `@Observable` class.
+See [Source-backed data](../docs/source-backed-data.md) for policies, lifecycle, and migration.
 
 ## Animated reordering
 

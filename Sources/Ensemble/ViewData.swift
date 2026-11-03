@@ -88,10 +88,12 @@ extension ViewDataAvailability: Equatable where Value: Equatable {}
 extension ViewDataAvailability: Hashable where Value: Hashable {}
 extension ViewDataAvailability: Sendable where Value: Sendable {}
 
-/// Observable presentation state for an initial value or updates supplied by ``ViewDataContext``.
+/// Observable presentation state for an initial value, a managed source, or one-shot loads.
 ///
 /// `ViewData` retains its latest successful value while loading or failed. A view can present that
 /// retained value without requiring the source to emit it again.
+/// Source-aware initialization lets `AsyncContent` manage observation automatically. Replacing
+/// the source preserves the same presentation state and its latest successful value.
 ///
 /// ``reset()`` clears presentation state without cancelling work. A later accepted update from a
 /// load or binding can supply another value.
@@ -215,9 +217,8 @@ public final class ViewData<Value> {
     @ObservationIgnored private var nextLoadingToken: UInt = 0
     @ObservationIgnored private var currentLoadingToken: UInt?
 
-    // Binding ownership is independent of observable presentation and must not retain its context.
-    @ObservationIgnored weak var bindingContext: ViewDataContext?
-    @ObservationIgnored var bindingID: UUID?
+    // One binding owns this value's source configuration and active subscription.
+    @ObservationIgnored var binding: ViewDataBinding<Value>?
 
     /// Creates empty presentation state.
     public init() {
@@ -290,8 +291,8 @@ public final class ViewData<Value> {
     /// Removes the latest value and returns the presentation to ``Phase/empty``.
     ///
     /// Resetting presentation state does not cancel an active load or binding. A later accepted
-    /// update can replace the empty state. Use ``ViewDataContext/cancel(_:)`` when a binding should
-    /// stop as well, and cancel the task awaiting ``ViewDataContext/load(_:to:)`` to stop a load.
+    /// update can replace the empty state. Cancel the tasks awaiting ``observe()`` to end explicit
+    /// observation, and cancel the task awaiting ``load(_:)`` to stop a one-shot load.
     public func reset() {
         currentLoadingToken = nil
         updatePresentation {

@@ -156,7 +156,6 @@ private final class AnimatedReorderingViewModel {
     let entries = ViewData<[SampleEntry]>()
     private(set) var siblingRevision = 0
 
-    @ObservationIgnored private let context = ViewDataContext()
     @ObservationIgnored private var showsUpdatedEntries = false
     @ObservationIgnored private var didStart = false
 
@@ -176,13 +175,13 @@ private final class AnimatedReorderingViewModel {
     }
 
     private func loadInitialEntries() async {
-        await context.load({
+        await entries.load({
             let delay: Duration = SampleAppUITesting.isEnabled
                 ? .seconds(8)
                 : .milliseconds(1_200)
             try await Task.sleep(for: delay)
             return Self.originalEntries
-        }, to: entries)
+        })
     }
 
     func updateBoth() {
@@ -203,7 +202,7 @@ private final class AnimatedReorderingViewModel {
     private func load(_ value: [SampleEntry]) {
         Task { @MainActor [weak self] in
             guard let self else { return }
-            await self.context.load({ value }, to: self.entries)
+            await self.entries.load { value }
         }
     }
 

@@ -28,6 +28,7 @@ import UIKit
 #endif
 
 enum SampleScenario: String, CaseIterable, Identifiable {
+    case sourceLifecycle = "source-lifecycle"
     case loadingLab = "loading-lab"
     case screenReplacement = "screen-replacement"
     case cachedRefresh = "cached-refresh"
@@ -38,6 +39,7 @@ enum SampleScenario: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
+        case .sourceLifecycle: "Source lifecycle"
         case .loadingLab: "Loading lab"
         case .screenReplacement: "Screen replacement"
         case .cachedRefresh: "Cached refresh"
@@ -48,6 +50,8 @@ enum SampleScenario: String, CaseIterable, Identifiable {
 
     var detail: String {
         switch self {
+        case .sourceLifecycle:
+            "Seed immediately, swap source instances, and connect property-declared streams."
         case .loadingLab:
             "Switch request states, tune latency, clear the cache, and trigger failures."
         case .screenReplacement:
@@ -63,6 +67,7 @@ enum SampleScenario: String, CaseIterable, Identifiable {
 
     var systemImage: String {
         switch self {
+        case .sourceLifecycle: "arrow.left.arrow.right"
         case .loadingLab: "slider.horizontal.3"
         case .screenReplacement: "rectangle.portrait.slash"
         case .cachedRefresh: "arrow.trianglehead.2.clockwise.rotate.90"
@@ -77,6 +82,8 @@ struct ScenarioDestination: View {
 
     var body: some View {
         switch scenario {
+        case .sourceLifecycle:
+            SourceLifecycleExample()
         case .loadingLab:
             LoadingLabExample()
         case .screenReplacement:

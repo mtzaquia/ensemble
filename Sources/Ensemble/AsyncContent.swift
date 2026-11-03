@@ -162,6 +162,13 @@ private enum AsyncContentData<Value> {
         }
     }
 
+    func observe(using lifecycle: AsyncContentSourceObservation) {
+        switch self {
+        case .value(let data): lifecycle.bind(to: data)
+        case .optionalValue(let data): lifecycle.bind(to: data)
+        }
+    }
+
     func presentation(
         loadingPolicy: AsyncContentLoadingPolicy<Value>,
         failureRendering: AsyncContentFailureRendering
@@ -217,20 +224,23 @@ struct AsyncContentPresentation<Value> {
 /// becoming visible on success. It does not configure a SwiftUI transition modifier. Insertion or
 /// removal of the entire `AsyncContent` by an ancestor uses that ancestor's transaction.
 ///
-/// The loading policy applies while the data is empty as well as loading. When that policy renders
-/// no content, start an initial binding from a stable ancestor rather than a `.task` modifier
-/// attached directly to the empty `AsyncContent` value.
+/// Source-backed data is observed automatically, even when its initial presentation is hidden.
+/// Observation follows the consumer's SwiftUI state lifetime and is cancelled when its source
+/// lifecycle storage is released or rebound. Ordinary data still needs an explicit load or binding.
+/// Replace the source of a stable `ViewData` to retain its successful value during the next request.
 public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
     private let data: AsyncContentData<Value>
     private let loadingPolicy: AsyncContentLoadingPolicy<Value>
     private let failureRendering: AsyncContentFailureRendering
     @Environment(\.ensemblePhaseAnimation) private var configuredPhaseAnimation
     @State private var observation = AsyncContentObservation()
+    @State private var sourceObservation = AsyncContentSourceObservation()
     private let content: (Value, AsyncContentSource) -> Content
     private let failureContent: (any Error, ViewDataRetryAction?) -> FailureContent
 
     @ViewBuilder
     public var body: some View {
+        let _ = data.observe(using: sourceObservation)
         let observation = observation
         let _ = observation.bind(to: data.presentationSource, animation: configuredPhaseAnimation)
         let _ = observation.revision

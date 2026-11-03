@@ -66,34 +66,27 @@ struct ScreenReplacementExample: View {
                 }
             }
         }
-        .task {
-            viewModel.start()
-        }
     }
 }
 
 @Observable
 private final class ScreenReplacementViewModel {
-    let entries = ViewData<[SampleEntry]>()
+    let entries: ViewData<[SampleEntry]>
 
-    @ObservationIgnored private let context = ViewDataContext()
     @ObservationIgnored private let useCase = ScreenReplacementUseCase()
-    @ObservationIgnored private var hasStarted = false
 
-    func start() {
-        guard hasStarted == false else { return }
-        hasStarted = true
-        context.bind(useCase.values, to: entries)
+    init() {
+        entries = ViewData(make: useCase.values)
     }
 
     func reload() {
-        context.reload(entries)
+        entries.reload()
     }
 
     func loadOneValue() {
         Task { @MainActor [weak self] in
             guard let self else { return }
-            await context.load({
+            await entries.load({
                 [
                     SampleEntry(
                         id: 100,
@@ -101,7 +94,7 @@ private final class ScreenReplacementViewModel {
                         detail: "Loaded without replacing the bound stream"
                     ),
                 ]
-            }, to: entries)
+            })
         }
     }
 }

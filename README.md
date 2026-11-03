@@ -10,16 +10,17 @@
 `Ensemble` is a SwiftUI presentation-state library for composing self-contained, reloadable
 features.
 
-A `ViewData` value remembers the latest successful data and its current lifecycle phase.
-A `ViewDataContext` feeds it from one-shot asynchronous operations or asynchronous sequences,
-while `AsyncContent` decides whether a view should show the latest data, retained data, placeholders,
-a failure, or nothing.
+A `ViewData` value remembers successful data and its current lifecycle phase. In the v3 prototype,
+it can also own a lazy asynchronous source: `AsyncContent` connects it automatically, and replacing
+the source preserves the same successful model data through refresh and failure. `@ViewDataSource` offers
+property-level shorthand, with no model-level macro or projected value. Each data value owns its
+binding; one-shot operations use `await entries.load(...)`.
 
 - Seed presentation state immediately, load one value, or bind a stream of updates.
 - Distinguish not-yet-loaded, loaded-but-empty, and reset observable state.
 - Keep useful data visible while a refresh is loading or fails.
 - Recover after a failure without terminating the stream.
-- Reload cold sources with `.resubscribe` or signal a hot source with `.refresh(action)`.
+- Reload cold sources by resubscribing or signal hot producers through a refresh action.
 - Animate presentation presence separately from caller-owned successful-content changes.
 
 ```swift
@@ -33,11 +34,11 @@ AsyncContent(viewModel.entries) { entries, _ in
 ## Install
 
 Ensemble requires Swift 6.3 and supports iOS 17+ and macOS 14+. It is available through Swift
-Package Manager.
+Package Manager. This branch is the unreleased v3.0.0 prototype; the APIs below are not in v2.
 
 ```swift
 dependencies: [
-  .package(url: "https://github.com/mtzaquia/ensemble.git", from: "2.0.0"),
+  .package(url: "https://github.com/mtzaquia/ensemble.git", branch: "zaquia/v3"),
 ]
 ```
 
@@ -45,8 +46,7 @@ Add the `Ensemble` product to the app target, then `import Ensemble` where it is
 
 ## Five-minute start
 
-Start with a source that returns an asynchronous sequence of `Result` values. Own one `ViewData`
-value and retain its `ViewDataContext` for as long as the subscription should remain active:
+Initialize presentation state with a synchronous snapshot and a lazy result-sequence factory:
 
 ```swift
 import Ensemble
@@ -60,6 +60,7 @@ enum EntryFailure: Error, Sendable {
   case unavailable
 }
 
+@MainActor
 final class EntriesUseCase {
   func values() -> AsyncStream<Result<[Entry], EntryFailure>> {
     AsyncStream { continuation in
@@ -73,23 +74,19 @@ final class EntriesUseCase {
 
 @MainActor
 final class EntriesViewModel {
-  let entries = ViewData<[Entry]>()
+  let entries: ViewData<[Entry]>
 
-  private let context = ViewDataContext()
-  private let useCase: EntriesUseCase
-
-  init(useCase: EntriesUseCase) {
-    self.useCase = useCase
-  }
-
-  func start() {
-    context.bind({ [useCase] in useCase.values() }, to: entries)
+  init(
+    useCase: EntriesUseCase,
+    initialEntries: ViewDataAvailability<[Entry]> = .unavailable
+  ) {
+    entries = ViewData(initialEntries, make: useCase.values)
   }
 }
 ```
 
-`ViewData` is observable, so the surrounding view model does not need observation solely to expose
-it. Render the value with `AsyncContent` and start the binding from a stable ancestor:
+The seed is immediately available. Creating the model starts no source work. Render the property
+directly; source-backed data connects automatically even when the initial content is hidden:
 
 ```swift
 import SwiftUI
@@ -102,36 +99,43 @@ struct EntriesView: View {
   }
 
   var body: some View {
-    ZStack {
+    List {
       AsyncContent(viewModel.entries) { entries, _ in
-        List(entries) { entry in
+        ForEach(entries) { entry in
           Text(entry.title)
         }
       }
-    }
-    .task {
-      viewModel.start()
     }
   }
 }
 ```
 
-With this `AsyncContent` initializer, loading and failure render nothing until a successful value
-exists, then retain that value. The [presentation policies guide](docs/presentation-policies.md)
-shows how to add placeholder or failure UI and where presentation and content animation belong.
+No context property, start method, or view task is needed for this path. For hot sources, pass a
+`refresh` action and choose `initialRefresh: .always`, `.whenUnavailable`, or `.never`. Cold sources
+fetch through their sequence and resubscribe when `entries.reload()` is called.
+
+Keep the data instance stable and swap its producer when dependencies change:
+
+```swift
+viewModel.entries.replaceSource(
+  make: anotherUseCase.values,
+  refresh: anotherUseCase.reload
+)
+```
+
+The existing successful value stays in `entries.latestValue`. Replacement reconnects active
+observation using the original `initialRefresh` policy; it does not accept a new seed or policy.
+For an account change, call `entries.reset()` before replacement to discard inappropriate content.
+See [Source-backed data and v3 migration](docs/source-backed-data.md).
 
 When adding skeletons, use `loading: .placeholder(...)` and redact only `source == .placeholder`.
-Ensemble keeps successful content, including empty results, visible throughout refresh. Keep the
-same `ViewData` instance; resetting it or redacting on the loading phase defeats that retention.
-See [the refresh pattern](docs/presentation-policies.md#keep-successful-content-visible-throughout-refresh).
-
-The surrounding `ZStack` remains mounted while `AsyncContent` is empty, making it a reliable place
-to start the binding. Releasing the context cancels its subscription.
-
-That is the core idea: bind observable presentation data once, then render its latest useful value with `AsyncContent`.
+Successful empty collections and successful optional `nil` remain distinct from unavailable data.
+The [presentation guide](docs/presentation-policies.md) covers loading, failure, and animation.
 
 ## Documentation
 
+- [Source-backed data and v3 migration](docs/source-backed-data.md) — automatic observation, property
+  macros, source replacement, and lifetime boundaries.
 - [Getting started](docs/getting-started.md) — connect a source, choose its reload behavior, and
   render the first result.
 - [Presentation policies](docs/presentation-policies.md) — choose placeholder, retained, hidden,

@@ -31,6 +31,36 @@ nonisolated final class SampleAppUITests: XCTestCase {
     }
 
     @MainActor
+    func testSourceReplacementRetainsRowsAndMacroStartsWhenShown() {
+        launch(.sourceLifecycle)
+        XCTAssertTrue(element("sample.source-lifecycle.screen").waitForExistence(timeout: 3))
+        XCTAssertTrue(element(A11y.entry(10)).waitForExistence(timeout: 2))
+
+        let swap = app.buttons["sample.source-lifecycle.swap"]
+        scrollUntilHittable(swap, direction: .up)
+        swap.tap()
+        XCTAssertTrue(waitForLabelContaining("Second", on: element("sample.source-lifecycle.current")))
+        XCTAssertTrue(waitForLabelContaining("yes", on: element("sample.source-lifecycle.model-value")))
+        XCTAssertTrue(waitForLabelContaining("Retained", on: element("sample.source-lifecycle.origin")))
+        XCTAssertTrue(element(A11y.entry(10)).exists, app.debugDescription)
+        XCTAssertFalse(element(A11y.entry(0)).exists)
+
+        let deliver = app.buttons["sample.source-lifecycle.deliver"]
+        scrollUntilHittable(deliver, direction: .up)
+        deliver.tap()
+        XCTAssertTrue(element(A11y.entry(20)).waitForExistence(timeout: 3))
+
+        let showMacro = app.buttons["sample.source-lifecycle.show-macro"]
+        scrollUntilHittable(showMacro, direction: .up)
+        XCTAssertTrue(waitForLabelContaining("0", on: element("sample.source-lifecycle.connections")))
+        showMacro.tap()
+        // List may defer constructing the source consumer until its rows enter the viewport.
+        scrollUntilHittable(app.buttons["sample.source-lifecycle.deliver-macro"], direction: .up)
+        let connections = element("sample.source-lifecycle.connections")
+        XCTAssertTrue(waitForLabelContaining("1", on: connections), "Counter: \(connections.label)")
+    }
+
+    @MainActor
     func testLoadingLabCanDeleteCacheAndFinishRequest() {
         launch(.loadingLab)
 
@@ -421,6 +451,7 @@ nonisolated final class SampleAppUITests: XCTestCase {
 }
 
 private enum Scenario: String {
+    case sourceLifecycle = "source-lifecycle"
     case loadingLab = "loading-lab"
     case screenReplacement = "screen-replacement"
     case cachedRefresh = "cached-refresh"

@@ -338,10 +338,10 @@ struct ViewDataTests {
     @Test("A failure result does not end the subscription")
     func sourceCanRecoverAfterFailure() async {
         let (stream, continuation) = AsyncStream<Result<Int, TestError>>.makeStream()
-        let data = ViewData<Int>()
-        let context = ViewDataContext()
 
-        context.bind({ stream }, to: data)
+        let data = ViewData<Int>(make: { stream })
+        let observation = await observe(data)
+        defer { observation.cancel() }
         #expect(data.isLoading)
 
         continuation.yield(.failure(.expected))
@@ -356,12 +356,12 @@ struct ViewDataTests {
     @Test("Bindings accept transformed asynchronous sequences")
     func transformedSequence() async {
         let (stream, continuation) = AsyncStream<Int>.makeStream()
-        let data = ViewData<Int>()
-        let context = ViewDataContext()
 
-        context.bind({
+        let data = ViewData<Int>(make: {
             stream.map { Result<Int, TestError>.success($0) }
-        }, to: data)
+        })
+        let observation = await observe(data)
+        defer { observation.cancel() }
 
         continuation.yield(42)
         #expect(await eventually { data.isSuccessful && data.latestValue == .available(42) })
@@ -373,10 +373,10 @@ struct ViewDataTests {
     func throwingSequence() async {
         let (stream, continuation) =
             AsyncThrowingStream<Result<Int, TestError>, any Error>.makeStream()
-        let data = ViewData<Int>()
-        let context = ViewDataContext()
 
-        context.bind({ stream }, to: data)
+        let data = ViewData<Int>(make: { stream })
+        let observation = await observe(data)
+        defer { observation.cancel() }
         continuation.finish(throwing: TestError.expected)
 
         #expect(await eventually { data.isFailed })
@@ -386,26 +386,26 @@ struct ViewDataTests {
         ViewData<Int>.Phase.Kind.empty, .success, .failure,
     ])
     func sourceCancellationCanRefresh(initialState: ViewData<Int>.Phase.Kind) async {
-        let data = ViewData<Int>()
-        if initialState == .success { data.set(41) }
-        if initialState == .failure { data.fail(TestError.expected) }
-        let context = ViewDataContext()
         var continuations: [AsyncThrowingStream<Result<Int, TestError>, any Error>.Continuation] = []
 
-        context.bind({
+        let data = ViewData<Int>(make: {
             let (stream, continuation) =
                 AsyncThrowingStream<Result<Int, TestError>, any Error>.makeStream()
             continuations.append(continuation)
             return stream
-        }, to: data, reload: .refresh {
+        }, refresh: {
             continuations.last?.yield(.success(42))
-        })
+        }, initialRefresh: .never)
+        if initialState == .success { data.set(41) }
+        if initialState == .failure { data.fail(TestError.expected) }
+        let observation = await observe(data)
+        defer { observation.cancel() }
 
         continuations[0].finish(throwing: CancellationError())
-        #expect(await eventually { data.phase.kind == initialState })
+        #expect(await eventually { data.binding?.isRunning == false && data.phase.kind == initialState })
         #expect(data.latestValue == (initialState == .success ? .available(41) : .unavailable))
 
-        context.reload(data)
+        data.reload()
         #expect(continuations.count == 2)
         #expect(data.isLoading)
         #expect(await eventually { data.latestValue == .available(42) && data.isSuccessful })
@@ -416,10 +416,8 @@ struct ViewDataTests {
     func customElementsResetPresentation() async {
         let (stream, continuation) =
             AsyncStream<TestUpdate>.makeStream()
-        let data = ViewData<Int>()
-        let context = ViewDataContext()
 
-        context.bind({ stream }, to: data) { update, sink in
+        let data = ViewData<Int>(make: { stream }, initialRefresh: .never) { update, sink in
             switch update {
             case .result(let result):
                 sink.receive(result)
@@ -427,6 +425,8 @@ struct ViewDataTests {
                 sink.reset()
             }
         }
+        let observation = await observe(data)
+        defer { observation.cancel() }
         #expect(data.isLoading)
         #expect(data.retryAction != nil)
 
@@ -448,20 +448,20 @@ struct ViewDataTests {
         let (firstStream, firstContinuation) = AsyncStream<TestUpdate>.makeStream()
         let (secondStream, secondContinuation) =
             AsyncStream<Result<Int, TestError>>.makeStream()
-        let data = ViewData<Int>()
-        let context = ViewDataContext()
         var retainedSink: ViewDataSink<Int>?
 
-        context.bind({ firstStream }, to: data) { update, sink in
+        let data = ViewData<Int>(make: { firstStream }, initialRefresh: .never) { update, sink in
             retainedSink = sink
             if case .result(let result) = update {
                 sink.receive(result)
             }
         }
+        let observation = await observe(data)
+        defer { observation.cancel() }
         firstContinuation.yield(.result(.success(41)))
         #expect(await eventually { retainedSink != nil && data.latestValue == .available(41) })
 
-        context.bind({ secondStream }, to: data)
+        data.replaceSource(make: { secondStream }) { result, sink in sink.receive(result) }
         secondContinuation.yield(.success(42))
         #expect(await eventually { data.isSuccessful && data.latestValue == .available(42) })
 
@@ -475,121 +475,22 @@ struct ViewDataTests {
         secondContinuation.finish()
     }
 
-    @Test("Rebinding through another context transfers subscription and retry ownership")
-    func bindingTransfersBetweenContexts() async throws {
-        let data = ViewData<Int>()
-        var first: ViewDataContext? = ViewDataContext()
-        weak var weakFirst: ViewDataContext?
-        weakFirst = first
-        let second = ViewDataContext()
-        let (firstStream, firstContinuation) = AsyncStream<TestUpdate>.makeStream()
-        var firstSourceCount = 0
-        var retainedSink: ViewDataSink<Int>?
-
-        first?.bind({
-            firstSourceCount += 1
-            return firstStream
-        }, to: data) { _, sink in
-            retainedSink = sink
-            sink.receive(Result<Int, TestError>.success(1))
-        }
-        firstContinuation.yield(.result(.success(1)))
-        #expect(await eventually { data.latestValue == .available(1) })
-        let staleRetry = try #require(data.retryAction)
-        let staleSink = try #require(retainedSink)
-
-        var continuations: [AsyncStream<Result<Int, TestError>>.Continuation] = []
-        second.bind({
-            let (stream, continuation) = AsyncStream<Result<Int, TestError>>.makeStream()
-            continuations.append(continuation)
-            return stream
-        }, to: data)
-
-        if case .terminated = firstContinuation.yield(.result(.success(99))) {
-            // Transfer cancels upstream consumption, as well as rejecting stale sink actions.
-        } else {
-            Issue.record("The previous context's source was not cancelled")
-        }
-        staleSink.receive(Result<Int, TestError>.success(99))
-        staleSink.reset()
-        staleRetry()
-        first?.reload(data)
-        first?.cancel(data)
-        first?.cancelAll()
-        first = nil
-
-        #expect(weakFirst == nil)
-        #expect(firstSourceCount == 1)
-        #expect(data.isLoading)
-        #expect(data.latestValue == .available(1))
-        let currentRetry = try #require(data.retryAction)
-
-        continuations[0].yield(.success(2))
-        #expect(await eventually { data.latestValue == .available(2) && data.isSuccessful })
-        currentRetry()
-        #expect(continuations.count == 2)
-        continuations[1].yield(.success(3))
-        #expect(await eventually { data.latestValue == .available(3) && data.isSuccessful })
-        continuations[1].finish()
-    }
-
-    @Test("Transferring to a disabled binding removes the previous retry")
-    func bindingTransfersToDisabledReload() throws {
-        let data = ViewData<Int>()
-        let first = ViewDataContext()
-        let second = ViewDataContext()
-        var sourceCount = 0
-        first.bind({
-            sourceCount += 1
-            return AsyncStream<Result<Int, TestError>> { _ in }
-        }, to: data)
-        let staleRetry = try #require(data.retryAction)
-
-        second.bind({ AsyncStream<Result<Int, TestError>> { _ in } }, to: data, reload: .disabled)
-        staleRetry()
-        first.cancelAll()
-        #expect(sourceCount == 1)
-        #expect(data.retryAction == nil)
-        #expect(data.isLoading)
-        second.cancel(data)
-        #expect(data.isEmpty)
-    }
-
-    @Test("Capturing a source directly does not retain its owning model")
-    func sourceCaptureReleasesOwner() {
-        weak var weakOwner: SourceCaptureOwner?
-        weak var weakContext: ViewDataContext?
-        let data: ViewData<Int>
-        do {
-            let owner = SourceCaptureOwner()
-            weakOwner = owner
-            weakContext = owner.context
-            data = owner.entries
-            owner.start()
-            #expect(data.isLoading)
-        }
-        #expect(weakOwner == nil)
-        #expect(weakContext == nil)
-        #expect(data.isEmpty)
-        #expect(data.retryAction == nil)
-    }
-
     @Test("A load and binding update the same destination in arrival order")
     func loadAndBindingWorkInTandem() async {
         let (source, sourceContinuation) =
             AsyncStream<Result<Int, TestError>>.makeStream()
         let (loadValues, loadContinuation) = AsyncStream<Int>.makeStream()
-        let data = ViewData<Int>()
-        let context = ViewDataContext()
 
-        context.bind({ source }, to: data)
+        let data = ViewData<Int>(make: { source })
+        let observation = await observe(data)
+        defer { observation.cancel() }
         let loadTask = Task {
-            await context.load({
+            await data.load({
                 for await value in loadValues {
                     return value
                 }
                 throw TestError.expected
-            }, to: data)
+            })
         }
 
         #expect(await eventually { data.isLoading })
@@ -613,11 +514,10 @@ struct ViewDataTests {
     @Test("A load presents failure while preserving the latest value")
     func loadFailure() async {
         let data = ViewData(.available(41))
-        let context = ViewDataContext()
 
-        await context.load({ () async throws -> Int in
+        await data.load({ () async throws -> Int in
             throw TestError.expected
-        }, to: data)
+        })
 
         #expect(data.isFailed)
         #expect(data.latestValue == .available(41))
@@ -626,15 +526,15 @@ struct ViewDataTests {
     @Test("Cancelling a load does not replace a later bound result")
     func loadCancellationPreservesLaterUpdate() async {
         let (source, continuation) = AsyncStream<Result<Int, TestError>>.makeStream()
-        let data = ViewData<Int>()
-        let context = ViewDataContext()
 
-        context.bind({ source }, to: data)
+        let data = ViewData<Int>(make: { source })
+        let observation = await observe(data)
+        defer { observation.cancel() }
         let loadTask = Task {
-            await context.load({
+            await data.load({
                 try await Task.sleep(for: .seconds(60))
                 return 1
-            }, to: data)
+            })
         }
 
         #expect(await eventually { data.isLoading })
@@ -652,10 +552,10 @@ struct ViewDataTests {
     @Test("Reset clears presentation without cancelling a binding")
     func resetPreservesBinding() async {
         let (source, continuation) = AsyncStream<Result<Int, TestError>>.makeStream()
-        let data = ViewData(.available(41))
-        let context = ViewDataContext()
 
-        context.bind({ source }, to: data)
+        let data = ViewData<Int>(.available(41), make: { source })
+        let observation = await observe(data)
+        defer { observation.cancel() }
         data.reset()
         #expect(data.isEmpty)
         #expect(data.latestValue == .unavailable)
@@ -669,14 +569,14 @@ struct ViewDataTests {
     @Test("Retry creates a fresh subscription and ignores the replaced source")
     func retryResubscribes() async throws {
         var continuations: [AsyncStream<Result<Int, TestError>>.Continuation] = []
-        let data = ViewData<Int>()
-        let context = ViewDataContext()
 
-        context.bind({
+        let data = ViewData<Int>(make: {
             let (stream, continuation) = AsyncStream<Result<Int, TestError>>.makeStream()
             continuations.append(continuation)
             return stream
-        }, to: data)
+        })
+        let observation = await observe(data)
+        defer { observation.cancel() }
 
         #expect(continuations.count == 1)
         continuations[0].yield(.failure(.expected))
@@ -699,14 +599,14 @@ struct ViewDataTests {
     @Test("A retry that completes without a result restores its failure")
     func emptyRetryRestoresFailure() async throws {
         var continuations: [AsyncStream<Result<Int, TestError>>.Continuation] = []
-        let data = ViewData<Int>()
-        let context = ViewDataContext()
 
-        context.bind({
+        let data = ViewData<Int>(make: {
             let (stream, continuation) = AsyncStream<Result<Int, TestError>>.makeStream()
             continuations.append(continuation)
             return stream
-        }, to: data)
+        })
+        let observation = await observe(data)
+        defer { observation.cancel() }
 
         continuations[0].yield(.failure(.expected))
         #expect(await eventually { data.isFailed })
@@ -722,17 +622,17 @@ struct ViewDataTests {
     @Test("Programmatic reload resubscribes by default")
     func reloadResubscribes() async {
         var continuations: [AsyncStream<Result<Int, TestError>>.Continuation] = []
-        let data = ViewData<Int>()
-        let context = ViewDataContext()
 
-        context.bind({
+        let data = ViewData<Int>(make: {
             let (stream, continuation) = AsyncStream<Result<Int, TestError>>.makeStream()
             continuations.append(continuation)
             return stream
-        }, to: data)
+        })
+        let observation = await observe(data)
+        defer { observation.cancel() }
 
         #expect(continuations.count == 1)
-        context.reload(data)
+        data.reload()
         #expect(continuations.count == 2)
         #expect(data.isLoading)
 
@@ -751,18 +651,18 @@ struct ViewDataTests {
         let (stream, continuation) = AsyncStream<Result<Int, TestError>>.makeStream()
         var sourceCount = 0
         var refreshCount = 0
-        let data = ViewData<Int>()
-        let context = ViewDataContext()
 
-        context.bind({
+        let data = ViewData<Int>(make: {
             sourceCount += 1
             return stream
-        }, to: data, reload: .refresh {
+        }, refresh: {
             refreshCount += 1
             continuation.yield(.success(refreshCount))
-        })
+        }, initialRefresh: .never)
+        let observation = await observe(data)
+        defer { observation.cancel() }
 
-        context.reload(data)
+        data.reload()
         #expect(data.isLoading)
         #expect(sourceCount == 1)
         #expect(refreshCount == 1)
@@ -784,21 +684,21 @@ struct ViewDataTests {
     @Test("Refresh reload reattaches after source completion")
     func reloadRefreshesCompletedSource() async {
         var continuations: [AsyncStream<Result<Int, TestError>>.Continuation] = []
-        let data = ViewData<Int>()
-        let context = ViewDataContext()
 
-        context.bind({
+        let data = ViewData<Int>(make: {
             let (stream, continuation) = AsyncStream<Result<Int, TestError>>.makeStream()
             continuations.append(continuation)
             return stream
-        }, to: data, reload: .refresh {
+        }, refresh: {
             continuations.last?.yield(.success(42))
-        })
+        }, initialRefresh: .never)
+        let observation = await observe(data)
+        defer { observation.cancel() }
 
         continuations[0].finish()
-        #expect(await eventually { data.isEmpty })
+        #expect(await eventually { data.binding?.isRunning == false && data.isEmpty })
 
-        context.reload(data)
+        data.reload()
         #expect(continuations.count == 2)
         #expect(data.isLoading)
         #expect(await eventually { data.isSuccessful && data.latestValue == .available(42) })
@@ -810,19 +710,19 @@ struct ViewDataTests {
     func disabledReload() async {
         let (stream, continuation) = AsyncStream<Result<Int, TestError>>.makeStream()
         var sourceCount = 0
-        let data = ViewData<Int>()
-        let context = ViewDataContext()
 
-        context.bind({
+        let data = ViewData<Int>(make: {
             sourceCount += 1
             return stream
-        }, to: data, reload: .disabled)
+        }, reload: .disabled) { result, sink in sink.receive(result) }
+        let observation = await observe(data)
+        defer { observation.cancel() }
 
         #expect(data.retryAction == nil)
         continuation.yield(.failure(.expected))
         #expect(await eventually { data.isFailed })
 
-        context.reload(data)
+        data.reload()
         #expect(sourceCount == 1)
         #expect(data.isFailed)
         #expect(data.retryAction == nil)
@@ -833,15 +733,16 @@ struct ViewDataTests {
     @Test("Removing retry availability preserves the latest-value revision")
     func cancellingFailedBindingPreservesLatestValueRevision() async {
         let (stream, continuation) = AsyncStream<Result<Int, TestError>>.makeStream()
-        let data = ViewData<Int>()
-        let context = ViewDataContext()
 
-        context.bind({ stream }, to: data)
+        let data = ViewData<Int>(make: { stream })
+        let observation = await observe(data)
+        defer { observation.cancel() }
         continuation.yield(.failure(.expected))
         #expect(await eventually { data.isFailed && data.retryAction != nil })
         let retryableFailure = data.latestValueRevision
 
-        context.cancel(data)
+        observation.cancel()
+        await observation.value
 
         #expect(data.isFailed)
         #expect(data.retryAction == nil)
@@ -850,75 +751,206 @@ struct ViewDataTests {
     }
 
     @Test("Cancelling removes retry and finishes the loading phase")
-    func cancel() throws {
+    func cancel() async throws {
         let (stream, continuation) = AsyncStream<Result<Int, TestError>>.makeStream()
         var sourceCount = 0
-        let data = ViewData<Int>()
-        let context = ViewDataContext()
 
-        context.bind({
+        let data = ViewData<Int>(make: {
             sourceCount += 1
             return stream
-        }, to: data)
+        })
+        let observation = await observe(data)
+        defer { observation.cancel() }
         let staleRetry = try #require(data.retryAction)
-        context.cancel(data)
+        observation.cancel()
+        await observation.value
 
         #expect(data.isEmpty)
         #expect(data.retryAction == nil)
         staleRetry()
-        context.reload(data)
+        data.reload()
         #expect(sourceCount == 1)
         continuation.finish()
     }
 
-    @Test("Context deallocation cancels a refresh binding")
-    func contextDeallocation() {
-        let (stream, continuation) = AsyncStream<Result<Int, TestError>>.makeStream()
-        let data = ViewData<Int>()
-        weak var weakContext: ViewDataContext?
-
-        do {
-            let context = ViewDataContext()
-            weakContext = context
-            context.bind({ stream }, to: data, reload: .refresh {})
-            #expect(data.retryAction != nil)
+    @Test("Ending observation invalidates a retained sink and retry across reconnection")
+    func cancelledConnectionStaysObsolete() async throws {
+        var producers: [AsyncStream<Int>.Continuation] = []
+        var sinks: [ViewDataSink<Int>] = []
+        let data = ViewData<Int>(make: {
+            let (stream, continuation) = AsyncStream<Int>.makeStream()
+            producers.append(continuation)
+            return stream
+        }) { value, sink in
+            sinks.append(sink)
+            sink.receive(Result<Int, TestError>.success(value))
         }
+        let first = await observe(data)
+        producers[0].yield(1)
+        #expect(await eventually { data.latestValue == .available(1) })
+        let oldRetry = try #require(data.retryAction)
+        let oldSink = try #require(sinks.first)
+        first.cancel()
+        await first.value
+        let second = await observe(data)
+        defer { second.cancel() }
+        #expect(producers.count == 2)
+        oldRetry()
+        oldSink.receive(Result<Int, TestError>.success(99))
+        oldSink.reset()
+        #expect(producers.count == 2)
+        #expect(data.latestValue == .available(1))
+        producers[1].yield(2)
+        #expect(await eventually { data.latestValue == .available(2) })
+    }
 
-        #expect(weakContext == nil)
+    @Test("Ending a binding cannot settle a newer one-shot loading transition")
+    func bindingCancellationPreservesLoad() async {
+        let data = ViewData<Int>(make: { AsyncStream<Result<Int, TestError>> { _ in } })
+        let observation = await observe(data)
+        var loadStarted = false
+        let load = Task {
+            await data.load {
+                loadStarted = true
+                try await Task.sleep(for: .seconds(60))
+                return 42
+            }
+        }
+        #expect(await eventually { loadStarted })
+        observation.cancel()
+        await observation.value
+        #expect(data.isLoading)
+        load.cancel()
+        await load.value
         #expect(data.isEmpty)
-        #expect(data.retryAction == nil)
-        continuation.finish()
     }
 
     @Test("A source that completes without another result restores retained success")
     func emptyRefreshPreservesSuccess() async {
         let (stream, continuation) = AsyncStream<Result<Int, TestError>>.makeStream()
-        let data = ViewData(.available(42))
-        let context = ViewDataContext()
 
-        context.bind({ stream }, to: data)
+        let data = ViewData<Int>(.available(42), make: { stream })
+        let observation = await observe(data)
+        defer { observation.cancel() }
         continuation.finish()
 
         #expect(await eventually { data.isSuccessful })
         #expect(data.latestValue == .available(42))
     }
-}
 
-@MainActor
-private final class SourceCaptureOwner {
-    final class Source {
-        func values() -> AsyncStream<Result<Int, ViewDataTests.TestError>> {
-            AsyncStream { _ in }
+    @Test("Replacing a source disables old sinks and retries while preserving observer leases")
+    func replacingConnection() async throws {
+        let (oldSource, oldProducer) = AsyncStream<TestUpdate>.makeStream()
+        var oldSink: ViewDataSink<Int>?
+        var oldConnections = 0
+        let data = ViewData<Int>(make: {
+            oldConnections += 1
+            return oldSource
+        }) { _, sink in
+            oldSink = sink
+            sink.receive(Result<Int, TestError>.success(1))
         }
+        let observation = await observe(data)
+        defer { observation.cancel() }
+        oldProducer.yield(.reset)
+        #expect(await eventually { data.latestValue == .available(1) })
+        let retry = try #require(data.retryAction)
+        let sink = try #require(oldSink)
+        var newProducers: [AsyncStream<Result<Int, TestError>>.Continuation] = []
+        data.replaceSource(make: {
+            let (stream, continuation) = AsyncStream<Result<Int, TestError>>.makeStream()
+            newProducers.append(continuation)
+            return stream
+        })
+        #expect(data.binding?.observerCount == 1)
+        #expect(data.latestValue == .available(1))
+        #expect(await eventually {
+            if case .terminated = oldProducer.yield(.reset) { return true }
+            return false
+        })
+        retry()
+        sink.receive(Result<Int, TestError>.success(99))
+        sink.reset()
+        #expect(oldConnections == 1)
+        #expect(data.latestValue == .available(1))
+        newProducers[0].yield(.success(2))
+        #expect(await eventually { data.latestValue == .available(2) })
+        data.reload()
+        #expect(newProducers.count == 2)
+        newProducers[1].yield(.success(3))
+        #expect(await eventually { data.latestValue == .available(3) })
     }
 
-    let entries = ViewData<Int>()
-    let context = ViewDataContext()
-    private let useCase = Source()
-
-    func start() {
-        context.bind({ [useCase] in useCase.values() }, to: entries)
+    @Test("Replacing with a disabled source removes retry availability")
+    func replacingWithDisabledReload() async throws {
+        let data = ViewData<Int>(make: { AsyncStream<Result<Int, TestError>> { _ in } })
+        let observation = await observe(data)
+        defer { observation.cancel() }
+        let retry = try #require(data.retryAction)
+        data.replaceSource(make: { AsyncStream<Int> { _ in } }, reload: .disabled) { value, sink in
+            sink.receive(Result<Int, TestError>.success(value))
+        }
+        retry()
+        #expect(data.retryAction == nil)
+        #expect(data.isLoading)
+        observation.cancel()
+        await observation.value
+        #expect(data.isEmpty)
     }
+
+    @Test("A collaborator-backed source outlives its model while data is still observed")
+    func sourceCaptureReleasesOwner() async {
+        var owner: CaptureOwner? = CaptureOwner()
+        weak var weakOwner: CaptureOwner?
+        weakOwner = owner
+        let data = owner!.entries
+        let producer = owner!.source.continuation
+        let observation = await observe(data)
+        defer { observation.cancel() }
+        owner = nil
+        #expect(weakOwner == nil)
+        producer.yield(.success(42))
+        #expect(await eventually { data.latestValue == .available(42) })
+        observation.cancel()
+        await observation.value
+        #expect(data.latestValue == .available(42))
+        #expect(data.retryAction == nil)
+    }
+
+    @Test("Releasing an unobserved value releases its binding and source captures")
+    func bindingDeallocation() async {
+        weak var weakData: ViewData<Int>?
+        weak var weakBinding: ViewDataBinding<Int>?
+        weak var weakSource: CaptureSource?
+        let producer: AsyncStream<Result<Int, TestError>>.Continuation
+        do {
+            let source = CaptureSource()
+            weakSource = source
+            producer = source.continuation
+            let data = ViewData(make: source.values, refresh: {})
+            weakData = data
+            weakBinding = data.binding
+            let observation = await observe(data)
+            #expect(data.retryAction != nil)
+            observation.cancel()
+            await observation.value
+            #expect(data.retryAction == nil)
+        }
+        #expect(weakData == nil)
+        #expect(weakBinding == nil)
+        #expect(weakSource == nil)
+        #expect(await eventually {
+            if case .terminated = producer.yield(.success(99)) { return true }
+            return false
+        })
+    }
+
+    private func observe<Value>(_ data: ViewData<Value>) async -> Task<Void, Never> {
+        let task = Task { await data.observe() }
+        #expect(await eventually { data.binding?.observerCount == 1 })
+        return task
+    }
+
 }
 
 @MainActor
@@ -970,4 +1002,18 @@ private func eventually(_ predicate: () -> Bool) async -> Bool {
         await Task.yield()
     }
     return predicate()
+}
+
+private final class CaptureSource {
+    let stream: AsyncStream<Result<Int, ViewDataTests.TestError>>
+    let continuation: AsyncStream<Result<Int, ViewDataTests.TestError>>.Continuation
+
+    init() { (stream, continuation) = AsyncStream.makeStream() }
+    func values() -> AsyncStream<Result<Int, ViewDataTests.TestError>> { stream }
+}
+
+private final class CaptureOwner {
+    let source = CaptureSource()
+    let entries: ViewData<Int>
+    init() { entries = ViewData(make: source.values) }
 }

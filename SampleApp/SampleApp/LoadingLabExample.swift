@@ -190,9 +190,6 @@ struct LoadingLabExample: View {
         }
         .accessibilityIdentifier(SampleAppAccessibility.loadingLabScreen)
         .navigationTitle("Loading lab")
-        .task {
-            viewModel.start()
-        }
     }
 }
 
@@ -221,7 +218,7 @@ private enum LoadingLabRequestStage: String, CaseIterable, Identifiable {
 
 @Observable
 private final class LoadingLabViewModel {
-    let entries = ViewData<[SampleEntry]?>(.available(SampleEntry.cached))
+    let entries: ViewData<[SampleEntry]?>
 
     var duration = 3.0
     private(set) var shouldFail = false
@@ -230,10 +227,8 @@ private final class LoadingLabViewModel {
     private(set) var isRunningAutomatically = false
     private(set) var events: [LoadingLabEvent] = []
 
-    @ObservationIgnored private let context = ViewDataContext()
     @ObservationIgnored private let useCase = LoadingLabUseCase()
     @ObservationIgnored private var automaticTask: Task<Void, Never>?
-    @ObservationIgnored private var hasStarted = false
     @ObservationIgnored private var nextEventID = 0
     @ObservationIgnored private var requestIsActive = false
 
@@ -281,15 +276,11 @@ private final class LoadingLabViewModel {
         isRunningAutomatically ? "pause.fill" : "play.fill"
     }
 
-    func start() {
-        guard hasStarted == false else { return }
-        hasStarted = true
-        context.bind(
-            useCase.values,
-            to: entries,
-            reload: .refresh {}
+    init() {
+        entries = ViewData(
+            .available(SampleEntry.cached), make: useCase.values,
+            refresh: {}, initialRefresh: .never
         )
-        useCase.finish(with: .success(SampleEntry.cached))
         record(
             title: "Sample value installed",
             detail: "The lab started with retained rows ready for the first request.",
@@ -415,7 +406,7 @@ private final class LoadingLabViewModel {
     private func beginRequest() {
         requestIsActive = true
         requestStage = .inFlight
-        context.reload(entries)
+        entries.reload()
         record(
             title: "Request started",
             detail: "Waiting for the next result. A previously visible failure remains on screen.",
@@ -526,22 +517,21 @@ private final class LoadingLabViewModel {
 private final class LoadingLabUseCase {
     typealias Update = Result<[SampleEntry]?, SampleFailure>
 
-    private let stream: AsyncStream<Update>
-    private let continuation: AsyncStream<Update>.Continuation
+    private var continuations: [UUID: AsyncStream<Update>.Continuation] = [:]
     private var generation = 0
 
-    init() {
-        let (stream, continuation) = AsyncStream<Update>.makeStream()
-        self.stream = stream
-        self.continuation = continuation
-    }
-
     func values() -> AsyncStream<Update> {
-        stream
+        let id = UUID()
+        let (stream, continuation) = AsyncStream<Update>.makeStream()
+        continuations[id] = continuation
+        continuation.onTermination = { [weak self] _ in
+            Task { @MainActor [weak self] in self?.continuations[id] = nil }
+        }
+        return stream
     }
 
     func finish(with update: Update) {
-        continuation.yield(update)
+        for continuation in continuations.values { continuation.yield(update) }
     }
 
     func nextGeneration() -> Int {

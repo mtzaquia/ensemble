@@ -20,14 +20,14 @@
 //  SOFTWARE.
 //
 
-/// Defines how a ``ViewDataContext`` reloads a bound ``ViewData`` value.
+/// Defines how a custom source reloads its ``ViewData`` value.
 public enum ViewDataReloadBehavior {
     /// Cancels the current subscription and creates a fresh sequence from the source factory.
     case resubscribe
 
     /// Keeps an active subscription and asks its upstream producer to publish a new result.
     ///
-    /// If the sequence has already completed, the context creates a fresh sequence before calling
+    /// If the sequence has already completed, the binding creates a fresh sequence before calling
     /// the action. The action must publish into the sequence returned by the source factory.
     ///
     /// - Parameter action: The main actor-isolated operation that starts the upstream refresh.

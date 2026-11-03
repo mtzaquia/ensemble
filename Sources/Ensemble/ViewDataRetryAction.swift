@@ -22,9 +22,9 @@
 
 /// An action that reloads the source bound to a ``ViewData`` value.
 ///
-/// Calling this action uses the ``ViewDataReloadBehavior`` configured by
-/// ``ViewDataContext/bind(_:to:reload:)``. It either creates a fresh subscription or refreshes the
-/// active subscription's producer. A binding with disabled reload exposes no action instead.
+/// Calling this action uses the reload behavior configured by the source initializer. It either
+/// creates a fresh subscription or refreshes the active subscription's producer. A binding with
+/// disabled reload exposes no action instead.
 ///
 /// The action is main actor-isolated.
 public struct ViewDataRetryAction {

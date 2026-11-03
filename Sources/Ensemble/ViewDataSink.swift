@@ -22,7 +22,7 @@
 
 /// Applies a source-specific binding update to presentation state.
 ///
-/// Ensemble supplies a sink to the custom ``ViewDataContext/bind(_:to:reload:receive:)`` handler.
+/// Ensemble supplies a sink to a custom source initializer or `replaceSource` handler.
 /// Its actions are ignored after that binding is replaced or cancelled.
 @MainActor
 public struct ViewDataSink<Value> {

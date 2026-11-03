@@ -64,9 +64,6 @@ struct CachedRefreshExample: View {
         }
         .accessibilityIdentifier(SampleAppAccessibility.cachedRefreshScreen)
         .navigationTitle("Cached refresh")
-        .task {
-            viewModel.start()
-        }
     }
 }
 
@@ -165,13 +162,11 @@ private enum CachedRefreshTiming: String, CaseIterable, Identifiable {
 
 @Observable
 private final class CachedRefreshViewModel {
-    let entries = ViewData(.available(SampleEntry.cached))
+    let entries: ViewData<[SampleEntry]>
     var timing = CachedRefreshTiming.slow
     var rowTaps = 0
 
-    @ObservationIgnored private let context = ViewDataContext()
     @ObservationIgnored private let useCase = CachedRefreshUseCase()
-    @ObservationIgnored private var hasStarted = false
 
     var isLoading: Bool { entries.phase.kind == .loading }
     var hasPendingResponse: Bool { useCase.hasPendingResponse }
@@ -196,13 +191,10 @@ private final class CachedRefreshViewModel {
         }
     }
 
-    func start() {
-        guard hasStarted == false else { return }
-        hasStarted = true
-        context.bind(
-            useCase.values,
-            to: entries,
-            reload: .refresh(useCase.reload)
+    init() {
+        entries = ViewData(
+            .available(SampleEntry.cached), make: useCase.values,
+            refresh: useCase.reload, initialRefresh: .never
         )
     }
 
@@ -232,13 +224,13 @@ private final class CachedRefreshViewModel {
     private func refresh(with update: CachedRefreshUseCase.Update) {
         useCase.prepare(update, timing: timing)
         // Reload the same destination. Do not reset it or redact retained content.
-        context.reload(entries)
+        entries.reload()
     }
 
     func loadOneValue() {
         Task { @MainActor [weak self] in
             guard let self else { return }
-            await context.load({
+            await entries.load({
                 [
                     SampleEntry(
                         id: 200,
@@ -246,7 +238,7 @@ private final class CachedRefreshViewModel {
                         detail: "A load and binding can update the same presentation state"
                     ),
                 ]
-            }, to: entries)
+            })
         }
     }
 }
@@ -256,22 +248,22 @@ private final class CachedRefreshUseCase {
     typealias Update = Result<[SampleEntry], SampleFailure>
 
     private(set) var hasPendingResponse = false
-    @ObservationIgnored private let stream: AsyncStream<Update>
-    @ObservationIgnored private let continuation: AsyncStream<Update>.Continuation
+    @ObservationIgnored private var continuations: [UUID: AsyncStream<Update>.Continuation] = [:]
+    @ObservationIgnored private var latestUpdate: Update = .success(SampleEntry.cached)
     @ObservationIgnored private var nextUpdate: Update = .success(SampleEntry.cached)
     @ObservationIgnored private var timing = CachedRefreshTiming.slow
     @ObservationIgnored private var pendingUpdate: Update?
     @ObservationIgnored private var reloadTask: Task<Void, Never>?
 
-    init() {
-        let (stream, continuation) = AsyncStream<Update>.makeStream()
-        self.stream = stream
-        self.continuation = continuation
-        continuation.yield(.success(SampleEntry.cached))
-    }
-
     func values() -> AsyncStream<Update> {
-        stream
+        let id = UUID()
+        let (stream, continuation) = AsyncStream<Update>.makeStream()
+        continuations[id] = continuation
+        continuation.yield(latestUpdate)
+        continuation.onTermination = { [weak self] _ in
+            Task { @MainActor [weak self] in self?.continuations[id] = nil }
+        }
+        return stream
     }
 
     func prepare(_ update: Update, timing: CachedRefreshTiming) {
@@ -308,6 +300,7 @@ private final class CachedRefreshUseCase {
         reloadTask = nil
         pendingUpdate = nil
         hasPendingResponse = false
-        continuation.yield(update)
+        latestUpdate = update
+        for continuation in continuations.values { continuation.yield(update) }
     }
 }

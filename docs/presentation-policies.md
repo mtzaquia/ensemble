@@ -47,8 +47,8 @@ replace the failure in between.
 ### Keep successful content visible throughout refresh
 
 `.placeholder(value)` is a fallback when no suitable successful value exists. It does not replace
-retained content when a refresh starts, even when the request is slow. Both `load(_:to:)` and
-`reload(_:)` preserve the destination's latest successful value while changing its phase to loading.
+retained content when a refresh starts, even when the request is slow. Both `load(_:)` and
+`reload()` preserve the destination's latest successful value while changing its phase to loading.
 
 Redact and disable only content whose `source` is `.placeholder`. A `.retained` value is real,
 successful data and can remain readable and interactive during refresh or recoverable failure:
@@ -90,9 +90,10 @@ so an explicit placeholder can still be used while loading. See [Render optional
 | New successful result | New value, `.latest` |
 | Explicit reset with no subsequent result | Supplied placeholder, `.placeholder` |
 
-Keep the same `ViewData` instance in a stable owner across refreshes. Reload the existing binding,
-or load into that same destination. Do not call `reset()`, recreate `ViewData`, or replace its
-successful value with an artificial empty collection merely because another request started.
+Keep the same `ViewData` instance across refreshes and source replacement. Reload the existing
+source or use `replaceSource(make:refresh:)` to change its producer while keeping successful model
+data available. Do not call `reset()` or supply an artificial empty success merely because another
+request starts. See [Source-backed data](source-backed-data.md#replace-the-producer-keep-presentation-state).
 Use `reset()` when the old value is no longer suitable, such as when switching accounts. That
 deliberate invalidation removes retention and restores the initial fallback immediately. Reset
 does not cancel work; cancel or supersede obsolete producers so they cannot repopulate the destination

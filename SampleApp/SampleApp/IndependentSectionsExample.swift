@@ -103,9 +103,6 @@ struct IndependentSectionsExample: View {
         .phaseAnimation(.snappy)
         .accessibilityIdentifier(SampleAppAccessibility.independentSectionsScreen)
         .navigationTitle("Independent sections")
-        .task {
-            viewModel.start()
-        }
     }
 
     private func sectionHeader(_ title: String, source: AsyncContentSource) -> some View {
@@ -119,26 +116,22 @@ struct IndependentSectionsExample: View {
 
 @Observable
 private final class IndependentSectionsViewModel {
-    let activity = ViewData<[SampleEntry]>()
-    let account = ViewData(.available(SampleEntry.cached))
-    let tip = ViewData<String>()
+    let activity: ViewData<[SampleEntry]>
+    let account: ViewData<[SampleEntry]>
+    let tip: ViewData<String>
 
-    @ObservationIgnored private let context = ViewDataContext()
     @ObservationIgnored private let useCase = IndependentSectionsUseCase()
-    @ObservationIgnored private var hasStarted = false
 
-    func start() {
-        guard hasStarted == false else { return }
-        hasStarted = true
-        context.bind(useCase.activityValues, to: activity)
-        context.bind(useCase.accountValues, to: account)
-        context.bind(useCase.tipValues, to: tip)
+    init() {
+        activity = ViewData(make: useCase.activityValues)
+        account = ViewData(.available(SampleEntry.cached), make: useCase.accountValues)
+        tip = ViewData(make: useCase.tipValues)
     }
 
     func reload() {
-        context.reload(activity)
-        context.reload(account)
-        context.reload(tip)
+        activity.reload()
+        account.reload()
+        tip.reload()
     }
 }
 

@@ -1,102 +1,84 @@
 # Getting started
 
-Ensemble separates presentation state, subscription ownership, and rendering policy. Keep the
-first two in a main-actor model, then let each SwiftUI call site decide how to present the result.
+Declare a source on `ViewData`, then pass that value to `AsyncContent`. The data owns its binding;
+SwiftUI consumers share observation of it. No separate subscription owner or startup method is needed.
 
-## Bind presentation data
+## Declare presentation data
 
-A bound source is an `AsyncSequence` of `Result` values. A failure element can be followed by a
-success, while an error thrown by iteration ends the sequence and enters failure.
+A source is an `AsyncSequence` of `Result` values. A failure element can be followed by a success;
+an error thrown by iteration ends that subscription and enters failure.
 
 ```swift
 import Ensemble
 
 @MainActor
 final class EntriesViewModel {
-  let entries = ViewData<[Entry]>()
+  let entries: ViewData<[Entry]>
 
-  private let context = ViewDataContext()
-  private let useCase: EntriesUseCase
-
-  init(useCase: EntriesUseCase) {
-    self.useCase = useCase
-  }
-
-  func start() {
-    context.bind({ [useCase] in useCase.values() }, to: entries)
-  }
-
-  func reload() {
-    context.reload(entries)
+  init(useCase: EntriesUseCase, initial: ViewDataAvailability<[Entry]> = .unavailable) {
+    entries = ViewData(initial, make: useCase.values)
   }
 }
 ```
 
-Keep the context alive for as long as its bindings should remain active. Binding marks `entries`
-as loading and consumes results until the sequence completes, the destination is rebound, or the
-context is released. Success replaces `latestValue`; failure preserves it.
+An available seed is exposed synchronously, including an empty collection or optional `nil`.
+Creating `ViewData` does not invoke the factory. The factory runs when observation starts and
+must return promptly; expensive work belongs to the sequence's producer.
 
-The source factory runs synchronously and must return promptly. Networking, observation, and other
-work belong to the sequence producer.
+Factories and refresh closures retain their captures. Capture collaborators directly, or use the
+weak-owner initializer described in [Source-backed data](source-backed-data.md).
 
-Capture the source directly, as above, so the retained factory does not retain the view model that
-owns the context. Use the same capture pattern for an escaping refresh action.
-
-## Match reload to the source
-
-The default `.resubscribe` behavior replaces a cold, request-per-subscription sequence. A hot
-source instead needs an action that publishes through its existing subscription:
+## Render the data
 
 ```swift
-context.bind(
-  { [useCase] in useCase.values() },
-  to: entries,
-  reload: .refresh { [useCase] in useCase.refresh() }
-)
-```
-
-`context.reload(entries)` and retry UI both use the configured behavior. Choose `.disabled` when
-neither should be available.
-
-Use `load(_:to:)` for one throwing asynchronous operation:
-
-```swift
-await context.load(useCase.fetch, to: entries)
-```
-
-A load and binding may feed the same destination; accepted updates are applied in arrival order.
-See [Sources and lifecycle](sources-and-lifecycle.md) for reset-aware adapters, completion, and
-cancellation.
-
-## Render presentation state
-
-Pass `ViewData` to `AsyncContent` and start the binding from a stable ancestor:
-
-```swift
-ZStack {
-  AsyncContent(viewModel.entries) { entries, _ in
-    List(entries) { entry in
+List {
+  AsyncContent(viewModel.entries, loading: .placeholder(Entry.placeholders)) { entries, source in
+    ForEach(entries) { entry in
       Text(entry.title)
+        .redacted(reason: source == .placeholder ? .placeholder : [])
     }
   }
 }
-.task {
-  viewModel.start()
-}
 ```
 
-The default policies render nothing before the first success, then retain the latest successful
-value while loading or failed. An empty collection is still a success; render its empty state
-inside the success builder. See [Presentation policies](presentation-policies.md) for placeholders,
-failure UI, and retry.
+`AsyncContent` observes source-backed data automatically, even when its initial rendering is hidden.
+The seed is immediately renderable; no startup task delays it. Default loading and failure policies
+retain the latest successful value. Empty collections are successes: render their empty state inside
+the content builder. See [Presentation policies](presentation-policies.md) for failure UI and retry.
 
-For first-load skeletons, pass `loading: .placeholder(Entry.placeholders)` and redact only when
-the builder's `source == .placeholder`. Refreshes continue supplying real content as `.retained`,
-including a successful empty collection. Keep that content visible and interactive until the next
-result; neither a loading phase nor `.retained` means it should become a skeleton. Keep the same
-`ViewData` instance and reserve `reset()` for deliberate invalidation, not ordinary refresh.
-See [Keep successful content visible throughout refresh](presentation-policies.md#keep-successful-content-visible-throughout-refresh)
-for the complete pattern and troubleshooting.
+Concurrent consumers share one connection. When the last consumer's observation ends, the connection
+and retry action are cancelled, while the seed, successful value, and source configuration remain.
+A later consumer reconnects. Automatic observation follows SwiftUI state lifetime, including state
+that SwiftUI retains offscreen.
 
-Next: [Presentation policies](presentation-policies.md) ·
-[Sources and lifecycle](sources-and-lifecycle.md)
+## Request another result
+
+Cold sources perform work when connected; `entries.reload()` cancels and resubscribes. Hot sources
+need a separate action that publishes through their existing subscription:
+
+```swift
+entries = ViewData(
+  initial,
+  make: useCase.values,
+  refresh: useCase.refresh,
+  initialRefresh: .whenUnavailable
+)
+```
+
+`initialRefresh` chooses whether connecting should invoke that action: `.always`, `.whenUnavailable`,
+or `.never`. Programmatic reload and failure retry use the same binding. Reloading inactive data
+does nothing. Keep the data instance stable and use `replaceSource(make:refresh:)` when dependencies
+change; successful content stays available through replacement.
+
+For a single throwing asynchronous operation, use:
+
+```swift
+await entries.load(useCase.fetch)
+```
+
+The operation follows the caller's task lifetime. It can update the same data as a source binding;
+accepted updates apply in arrival order. Cancellation settles its own loading transition without
+replacing later updates. See [Sources and lifecycle](sources-and-lifecycle.md) for adapters and
+explicit task-scoped observation.
+
+Next: [Presentation policies](presentation-policies.md) · [Source-backed data](source-backed-data.md)
