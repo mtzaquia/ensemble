@@ -26,7 +26,9 @@
 /// creates a fresh subscription or refreshes the active subscription's producer. A binding with
 /// disabled reload exposes no action instead.
 ///
-/// The action is main actor-isolated.
+/// Calling the action starts a main actor-isolated reload task owned by the binding. Replacing
+/// the source or ending its last observation cancels that retry task. Direct callers that need
+/// to await completion should use `await data.reload()` instead.
 public struct ViewDataRetryAction {
     private let action: @MainActor () -> Void
 

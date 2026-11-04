@@ -395,7 +395,7 @@ struct ViewDataTests {
             return stream
         }, refresh: {
             continuations.last?.yield(.success(42))
-        }, initialRefresh: .never)
+        })
         if initialState == .success { data.set(41) }
         if initialState == .failure { data.fail(TestError.expected) }
         let observation = await observe(data)
@@ -405,7 +405,7 @@ struct ViewDataTests {
         #expect(await eventually { data.binding?.isRunning == false && data.phase.kind == initialState })
         #expect(data.latestValue == (initialState == .success ? .available(41) : .unavailable))
 
-        data.reload()
+        await data.reload()
         #expect(continuations.count == 2)
         #expect(data.isLoading)
         #expect(await eventually { data.latestValue == .available(42) && data.isSuccessful })
@@ -417,7 +417,7 @@ struct ViewDataTests {
         let (stream, continuation) =
             AsyncStream<TestUpdate>.makeStream()
 
-        let data = ViewData<Int>(make: { stream }, initialRefresh: .never) { update, sink in
+        let data = ViewData<Int>(make: { stream }) { update, sink in
             switch update {
             case .result(let result):
                 sink.receive(result)
@@ -450,7 +450,7 @@ struct ViewDataTests {
             AsyncStream<Result<Int, TestError>>.makeStream()
         var retainedSink: ViewDataSink<Int>?
 
-        let data = ViewData<Int>(make: { firstStream }, initialRefresh: .never) { update, sink in
+        let data = ViewData<Int>(make: { firstStream }) { update, sink in
             retainedSink = sink
             if case .result(let result) = update {
                 sink.receive(result)
@@ -632,8 +632,8 @@ struct ViewDataTests {
         defer { observation.cancel() }
 
         #expect(continuations.count == 1)
-        data.reload()
-        #expect(continuations.count == 2)
+        let reload = Task { await data.reload() }
+        #expect(await eventually { continuations.count == 2 })
         #expect(data.isLoading)
 
         continuations[1].yield(.success(42))
@@ -644,6 +644,7 @@ struct ViewDataTests {
         #expect(data.latestValue == .available(42))
 
         continuations[1].finish()
+        await reload.value
     }
 
     @Test("Refresh reload keeps an active subscription")
@@ -658,11 +659,11 @@ struct ViewDataTests {
         }, refresh: {
             refreshCount += 1
             continuation.yield(.success(refreshCount))
-        }, initialRefresh: .never)
+        })
         let observation = await observe(data)
         defer { observation.cancel() }
 
-        data.reload()
+        await data.reload()
         #expect(data.isLoading)
         #expect(sourceCount == 1)
         #expect(refreshCount == 1)
@@ -673,9 +674,8 @@ struct ViewDataTests {
 
         let retry = try #require(data.retryAction)
         retry()
-        #expect(data.isLoading)
+        #expect(await eventually { refreshCount == 2 })
         #expect(sourceCount == 1)
-        #expect(refreshCount == 2)
         #expect(await eventually { data.isSuccessful && data.latestValue == .available(2) })
 
         continuation.finish()
@@ -691,14 +691,14 @@ struct ViewDataTests {
             return stream
         }, refresh: {
             continuations.last?.yield(.success(42))
-        }, initialRefresh: .never)
+        })
         let observation = await observe(data)
         defer { observation.cancel() }
 
         continuations[0].finish()
         #expect(await eventually { data.binding?.isRunning == false && data.isEmpty })
 
-        data.reload()
+        await data.reload()
         #expect(continuations.count == 2)
         #expect(data.isLoading)
         #expect(await eventually { data.isSuccessful && data.latestValue == .available(42) })
@@ -722,7 +722,7 @@ struct ViewDataTests {
         continuation.yield(.failure(.expected))
         #expect(await eventually { data.isFailed })
 
-        data.reload()
+        await data.reload()
         #expect(sourceCount == 1)
         #expect(data.isFailed)
         #expect(data.retryAction == nil)
@@ -768,7 +768,7 @@ struct ViewDataTests {
         #expect(data.isEmpty)
         #expect(data.retryAction == nil)
         staleRetry()
-        data.reload()
+        await data.reload()
         #expect(sourceCount == 1)
         continuation.finish()
     }
@@ -875,10 +875,12 @@ struct ViewDataTests {
         #expect(data.latestValue == .available(1))
         newProducers[0].yield(.success(2))
         #expect(await eventually { data.latestValue == .available(2) })
-        data.reload()
-        #expect(newProducers.count == 2)
+        let reload = Task { await data.reload() }
+        #expect(await eventually { newProducers.count == 2 })
         newProducers[1].yield(.success(3))
-        #expect(await eventually { data.latestValue == .available(3) })
+        newProducers[1].finish()
+        await reload.value
+        #expect(data.latestValue == .available(3))
     }
 
     @Test("Replacing with a disabled source removes retry availability")

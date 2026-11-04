@@ -28,12 +28,12 @@ import Testing
 
 @Suite("Source macro expansion")
 struct ViewDataSourceMacroTests {
-    @Test("Generates source-backed accessors without changing the model initializer")
-    func propertyExpansion() {
+    @Test("Generates source-backed accessors with a default result adapter", arguments: ["", ", receive: nil"])
+    func propertyExpansion(_ adapter: String) {
         assertMacroExpansion(
             """
             class Model {
-                @ViewDataSource(make: { (model: Self) in model.values() })
+                @ViewDataSource(make: { (model: Self) in model.values() }\(adapter))
                 var value: ViewData<Int>
             }
             """,
@@ -51,7 +51,64 @@ struct ViewDataSourceMacroTests {
                                 model.values()
                             },
                             refresh: nil,
-                            initialRefresh: .whenUnavailable
+                            receive: { result, sink in
+                                sink.receive(result)
+                            }
+                        )
+                        return _value
+                    }
+                }
+
+                @ObservationIgnored private var _value: ViewData<Int>
+            }
+            """,
+            macroSpecs: ["ViewDataSource": MacroSpec(type: ViewDataSourceMacro.self)],
+            failureHandler: { Issue.record(Comment(rawValue: $0.message)) }
+        )
+    }
+
+    @Test("Forwards custom receive and async refresh closures")
+    func customAdapterExpansion() {
+        assertMacroExpansion(
+            """
+            class Model {
+                @ViewDataSource(
+                    make: { (model: Self) in model.updates() },
+                    refresh: { model in await model.reload() },
+                    receive: { update, sink in
+                        switch update {
+                        case .result(let result): sink.receive(result)
+                        case .reset: sink.reset()
+                        }
+                    }
+                )
+                var value: ViewData<Int>
+            }
+            """,
+            expandedSource: """
+            class Model {
+                var value: ViewData<Int> {
+                    @storageRestrictions(initializes: _value)
+                    init(initialValue) {
+                        _value = initialValue
+                    }
+                    get {
+                        _value._installSource(
+                            owner: self,
+                            make: { (model: Model) in
+                                model.updates()
+                            },
+                            refresh: { model in
+                                await model.reload()
+                            },
+                            receive: { update, sink in
+                                switch update {
+                                case .result(let result):
+                                    sink.receive(result)
+                                case .reset:
+                                    sink.reset()
+                                }
+                            }
                         )
                         return _value
                     }
@@ -71,6 +128,7 @@ struct ViewDataSourceMacroTests {
         "make: { (model: Model) in model.values { self.reload() } }",
         "make: { (model: Model) in super.values() }",
         "make: { (model: Model) in model.values() }, refresh: { model in self.reload() }",
+        "make: { (model: Model) in model.values() }, receive: { value, sink in self.apply(value) }",
     ])
     func instanceCapture(_ arguments: String) {
         let token = arguments.range(of: "self") ?? arguments.range(of: "super")!
@@ -88,7 +146,7 @@ struct ViewDataSourceMacroTests {
             }
             """,
             diagnostics: [DiagnosticSpec(
-                message: "@ViewDataSource callbacks must use their owner parameter instead of self or super",
+                message: "@ViewDataSource callbacks must not capture instance self or super",
                 line: 2, column: column
             )],
             macroSpecs: ["ViewDataSource": MacroSpec(type: ViewDataSourceMacro.self)],

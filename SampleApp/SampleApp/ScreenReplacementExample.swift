@@ -38,6 +38,9 @@ struct ScreenReplacementExample: View {
                     SampleEntryRows(entries: entries, source: source)
                 }
                 .accessibilityIdentifier(SampleAppAccessibility.screenReplacementContent)
+                .refreshable {
+                    await viewModel.entries.reload()
+                }
             } failure: { error, retry in
                 ContentUnavailableView {
                     Label("Entries unavailable", systemImage: "exclamationmark.triangle")
@@ -80,7 +83,7 @@ private final class ScreenReplacementViewModel {
     }
 
     func reload() {
-        entries.reload()
+        Task { await entries.reload() }
     }
 
     func loadOneValue() {

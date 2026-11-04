@@ -279,7 +279,7 @@ private final class LoadingLabViewModel {
     init() {
         entries = ViewData(
             .available(SampleEntry.cached), make: useCase.values,
-            refresh: {}, initialRefresh: .never
+            refresh: {}
         )
         record(
             title: "Sample value installed",
@@ -290,14 +290,16 @@ private final class LoadingLabViewModel {
 
     func select(_ stage: LoadingLabRequestStage) {
         pauseAutomaticLoading()
-        switch stage {
-        case .idle:
-            moveToIdle()
-        case .inFlight:
-            beginRequest()
-        case .finished:
-            beginRequestIfNeeded()
-            finishRequest()
+        Task {
+            switch stage {
+            case .idle:
+                moveToIdle()
+            case .inFlight:
+                await beginRequest()
+            case .finished:
+                await beginRequestIfNeeded()
+                finishRequest()
+            }
         }
     }
 
@@ -372,7 +374,6 @@ private final class LoadingLabViewModel {
     }
 
     private func runAutomatically() {
-        beginRequestIfNeeded()
         isRunningAutomatically = true
         record(
             title: "Automatic completion scheduled",
@@ -381,7 +382,9 @@ private final class LoadingLabViewModel {
         )
 
         automaticTask = Task { @MainActor [weak self] in
-            guard let self else { return }
+            guard let self, !Task.isCancelled else { return }
+            await beginRequestIfNeeded()
+            guard !Task.isCancelled else { return }
             do {
                 try await Task.sleep(for: .seconds(duration))
             } catch {
@@ -398,15 +401,15 @@ private final class LoadingLabViewModel {
         isRunningAutomatically = false
     }
 
-    private func beginRequestIfNeeded() {
+    private func beginRequestIfNeeded() async {
         guard requestIsActive == false else { return }
-        beginRequest()
+        await beginRequest()
     }
 
-    private func beginRequest() {
+    private func beginRequest() async {
         requestIsActive = true
         requestStage = .inFlight
-        entries.reload()
+        await entries.reload()
         record(
             title: "Request started",
             detail: "Waiting for the next result. A previously visible failure remains on screen.",

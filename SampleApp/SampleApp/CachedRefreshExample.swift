@@ -194,7 +194,7 @@ private final class CachedRefreshViewModel {
     init() {
         entries = ViewData(
             .available(SampleEntry.cached), make: useCase.values,
-            refresh: useCase.reload, initialRefresh: .never
+            refresh: useCase.reload
         )
     }
 
@@ -224,7 +224,7 @@ private final class CachedRefreshViewModel {
     private func refresh(with update: CachedRefreshUseCase.Update) {
         useCase.prepare(update, timing: timing)
         // Reload the same destination. Do not reset it or redact retained content.
-        entries.reload()
+        Task { await entries.reload() }
     }
 
     func loadOneValue() {

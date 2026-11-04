@@ -9,8 +9,7 @@ binding, with optional property macros and automatic observation. Swift 6.3, iOS
 let entries = ViewData(
   cachedAvailability,
   make: useCase.values,
-  refresh: useCase.reload,
-  initialRefresh: .always
+  refresh: useCase.reload
 )
 ```
 
@@ -29,8 +28,7 @@ let entries = ViewData(
   cachedAvailability,
   owner: useCase,
   make: { $0.values() },
-  refresh: { $0.reload() },
-  initialRefresh: .always
+  refresh: { await $0.reload() }
 )
 ```
 
@@ -64,32 +62,33 @@ For work outside `AsyncContent`, acquire a task-scoped lease directly:
 }
 ```
 
-The call waits until cancellation, including after sequence completion, so `entries.reload()` can
+The call waits until cancellation, including after sequence completion, so `await entries.reload()` can
 reconnect a completed sequence. Other active consumers keep their own leases. Plain `ViewData`
 without a managed source remains passive and its `observe()` returns immediately.
 
 ## Distinguish observing from requesting data
 
-| Source | Connecting | `reload()` |
+| Source | Connecting | `await reload()` |
 | --- | --- | --- |
 | Cold, no `refresh` action | Creates and consumes the request sequence | Cancels and resubscribes |
 | Hot, with a `refresh` action | Registers observation | Signals the producer, reconnecting a completed sequence first |
 
-`initialRefresh` controls only the separately supplied hot-source refresh action:
+Connecting invokes the factory without calling the refresh action. Hot sources can observe
+repository or use-case outcomes passively and replay an established snapshot without requesting
+new data. The model initiates loading explicitly and chooses the data layer's caching policy.
+Replay is optional: Ensemble cannot force an arbitrary sequence to emit immediately. A synchronous
+seed remains the first-paint guarantee.
 
-| Policy | At each connection, including source replacement |
-| --- | --- |
-| `.always` | Request a refresh, including when a successful value is retained |
-| `.whenUnavailable` | Request a refresh only when no successful value exists |
-| `.never` | Observe without requesting a refresh |
+Idle hot-source observation is not marked loading unless an explicit refresh is requested.
+Cold sources begin loading when their sequences connect. Empty collections and optional `nil`
+are successful available values.
 
-Observation always connects. Empty collections and optional `nil` are successful available values.
-Idle hot-source observation is not marked loading unless a refresh is requested. The policy also
-applies when observation reconnects after its last consumer has left.
-
-The hot-source factory must establish observation synchronously or buffer updates before iteration.
-Ensemble calls the factory before initial refresh, but cannot know whether arbitrary asynchronous
-registration has finished. `reload()` signals synchronously and does not await delivery.
+Hot factories should establish observation synchronously or buffer updates before iteration.
+On explicit reload of a completed source, Ensemble calls the factory before the refresh action,
+but cannot await arbitrary upstream registration. `await reload()` waits for the configured refresh
+closure. That closure must await the producer's actual work rather than launching a separate task.
+For a cold source, reload waits for the replacement sequence to complete. Cancelling that wait
+cancels its replacement subscription; ongoing streams should provide a refresh action.
 
 ## Use a property macro when it helps
 
@@ -100,8 +99,7 @@ final class EntriesModel {
 
   @ViewDataSource(
     make: { (model: Self) in model.useCase.values() },
-    refresh: { model in model.useCase.reload() },
-    initialRefresh: .always
+    refresh: { model in await model.useCase.reload() }
   )
   var entries: ViewData<[Entry]>
 
@@ -148,6 +146,54 @@ it cannot prove that a helper or returned sequence avoids retaining the owner pa
 Factories do not hold their owning model between invocations. A returned sequence can still retain
 that model if its producer captures it.
 
+## Adapt result/reset streams
+
+Result streams use the default adapter. Supply `receive` for a source such as Continuum's
+`Composition`, whose updates include both results and invalidation:
+
+```swift
+@ViewDataSource(
+  make: { (model: Self) in model.displayUser },
+  refresh: { model in await model.displayUser.load(using: .remote) },
+  receive: { update, sink in
+    switch update {
+    case .result(let result): sink.receive(result)
+    case .reset: sink.reset()
+    }
+  }
+)
+@ObservationIgnored
+var user: ViewData<DisplayUser>
+```
+
+The initializer accepts the same adapter:
+
+```swift
+let user = ViewData<DisplayUser>(
+  initial,
+  make: { displayUser },
+  refresh: { await displayUser.load(using: .remote) },
+  receive: { update, sink in
+    switch update {
+    case .result(let result): sink.receive(result)
+    case .reset: sink.reset()
+    }
+  }
+)
+```
+
+Here `displayUser` is an application-owned Continuum composition. No Continuum dependency is
+required by Ensemble itself. The owner-taking initializer and `replaceSource` accept `receive`
+as well. Adapters run on the main actor and their sinks ignore obsolete connections. Ordinary
+`Result` streams may omit `receive`, pass `nil`, or provide a custom mapping. Other element types
+require an adapter at compile time. Macro adapters follow the same inline-closure and capture
+checks as factory and refresh callbacks.
+
+The refresh callback is async. Use `.refreshable { await model.user.reload() }` to keep the
+refresh control active until the command finishes. Subscription remains passive; observing the
+composition does not execute its loading actions. Initial loading and cache-policy choices are
+explicit application actions.
+
 ## Replace the producer, keep presentation state
 
 ```swift
@@ -158,17 +204,16 @@ entries.replaceSource(
 ```
 
 Replacement cancels the old binding and rejects later results or retry actions from that binding.
-Active observation reconnects immediately; inactive data keeps the new factory dormant. Neither
-`initialValue` nor `initialRefresh` is a replacement argument: the seed was applied at construction,
-and the original connection policy remains in force.
+Active observation reconnects immediately; inactive data keeps the new factory dormant. Replacement
+calls the new factory without invoking its refresh action. The seed was applied at construction;
+replacement does not accept another initial value.
 
 The latest successful value stays in the same `ViewData`. Existing `AsyncContent` loading and
 failure policies present it, including successful empty or optional nil values. The model and
 every consumer use that single typed successful value throughout the source change.
 
-With `.whenUnavailable`, retained content suppresses the automatic refresh action even after
-replacement. Use `.always` at the declaration site when each newly installed source should fetch,
-or explicitly call `reload()` after replacing it.
+A replacement hot source may replay cached data or simply listen; replacing it does not request a
+load. Call `await reload()` after replacement when an explicit refresh is desired.
 
 For a domain boundary, invalidate before replacing:
 
@@ -176,7 +221,7 @@ For a domain boundary, invalidate before replacing:
 entries.reset()
 entries.replaceSource(
   make: { repository.values(for: newAccountID) },
-  refresh: { repository.reload(for: newAccountID) }
+  refresh: { await repository.reload(for: newAccountID) }
 )
 ```
 
@@ -195,7 +240,7 @@ a synchronous seed; source replacement from `.task` alone cannot guarantee that 
 - `ViewDataContext` is removed. Replace separate data creation and binding with a source-aware
   initializer. `AsyncContent` observes automatically; use a task awaiting `data.observe()` for an
   explicit lifetime. Replace `context.load(operation, to: data)` with `await data.load(operation)`,
-  and `context.reload(data)` with `data.reload()`. Cancel observation tasks to release their leases.
+  and `context.reload(data)` with `await data.reload()`. Cancel observation tasks to release their leases.
 - Custom source adapters move from `context.bind` to the initializer or `replaceSource` overload
   with a `receive` closure and a connection-scoped sink.
 - Remove corresponding startup tasks only after the data owns its source.
@@ -204,5 +249,5 @@ a synchronous seed; source replacement from `.task` alone cannot guarantee that 
 
 The sample's **Source lifecycle** scenario demonstrates synchronous seeds, retained data throughout
 source replacement, manual response delivery, and lazy property-macro activation. Package tests cover
-macro expansion, leases, cancellation, weak owners, policies, obsolete results and retry actions,
+macro expansion, leases, cancellation, weak owners, explicit refresh, obsolete results and retry actions,
 and retained source replacement in a hosted SwiftUI List.

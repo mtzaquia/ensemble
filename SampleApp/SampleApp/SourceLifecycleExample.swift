@@ -32,7 +32,7 @@ struct SourceLifecycleExample: View {
     var body: some View {
         List {
             Section {
-                Text("The first source is seeded before rendering. Replace its factory to keep the same model data and rows while a new source waits for delivery.")
+                Text("The first source is seeded before rendering. Replace its factory to keep the same model data and rows. Connection only subscribes; choose Reload to request a refresh, then deliver a response.")
                 LabeledContent("Current source", value: model.isSecond ? "Second" : "First")
                     .accessibilityIdentifier("sample.source-lifecycle.current")
                 Text("The model has a value: \(model.hasValue ? "yes" : "no")")
@@ -54,7 +54,8 @@ struct SourceLifecycleExample: View {
                     .accessibilityIdentifier("sample.source-lifecycle.deliver")
                 Button("Fail response", action: model.fail)
                     .accessibilityIdentifier("sample.source-lifecycle.fail")
-                Button("Reload") { model.entries.reload() }
+                Button("Reload") { Task { await model.entries.reload() } }
+                    .accessibilityIdentifier("sample.source-lifecycle.reload")
             }
 
             Section {
@@ -96,7 +97,7 @@ private final class SourceLifecycleModel {
     init() {
         entries = ViewData(
             .available(SampleEntry.cached), owner: first,
-            make: { $0.values() }, refresh: { $0.reload() }, initialRefresh: .always
+            make: { $0.values() }, refresh: { $0.reload() }
         )
     }
 
@@ -116,7 +117,6 @@ private final class MacroSourceModel {
     @ViewDataSource(
         make: { (model: Self) in model.useCase.values() },
         refresh: { model in model.useCase.reload() },
-        initialRefresh: .always,
         initialValue: .available(SampleEntry.cached)
     )
     var entries: ViewData<[SampleEntry]>

@@ -22,20 +22,6 @@
 
 @_exported import Observation
 
-/// Controls whether connecting a managed source requests a refresh from its producer.
-///
-/// Observation always connects. This policy only controls a separately supplied refresh action;
-/// a cold sequence performs its own work when connected. The policy is reapplied when observation
-/// reconnects after its last consumer leaves. Observing an idle hot source does not mark it loading.
-public enum ViewDataInitialRefresh: Sendable {
-    /// Invokes the refresh action on every connection, including when a value is retained.
-    case always
-    /// Invokes the refresh action only when no successful value is available.
-    case whenUnavailable
-    /// Connects observation without invoking the refresh action.
-    case never
-}
-
 /// Declares a lazily connected source on a main-actor class property.
 ///
 /// The annotated property must be a `var` explicitly typed as `ViewData<Value>`. Seed it with a
@@ -52,20 +38,43 @@ public enum ViewDataInitialRefresh: Sendable {
 /// This syntax check cannot prove that helpers or returned sequences avoid retaining the owner;
 /// they remain responsible for their own captures and producer cancellation.
 /// Hot sources must establish observation synchronously in `make` or buffer results published
-/// before iteration starts, so an initial refresh cannot lose its result.
+/// before iteration starts. Hot streams can remain passive and replay cached outcomes without
+/// requesting data. Initial requests belong to the model's explicit loading flow; the refresh
+/// action runs only for an explicit reload or retry.
 ///
 /// - Parameters:
 ///   - make: A prompt factory for a result sequence. Expensive work belongs to its producer.
 ///   - refresh: An optional action that requests another result from a hot source. Without one,
-///     reload cancels the current subscription and invokes `make` again.
-///   - initialRefresh: The policy used when this instance's source connects.
+///     reload cancels the current subscription and invokes `make` again. Await the producer's
+///     work in this closure so `reload()` can await its completion.
 ///   - initialValue: Optional declaration-site availability used to initialize the property.
+///   - receive: An optional adapter for result elements. Omit it to apply each result directly.
 @attached(accessor, names: named(init), named(get))
 @attached(peer, names: prefixed(_))
 public macro ViewDataSource<Owner: AnyObject, Value, Source: AsyncSequence, SourceError: Error>(
     make: @escaping @MainActor (Owner) -> Source,
-    refresh: (@MainActor (Owner) -> Void)? = nil,
-    initialRefresh: ViewDataInitialRefresh = .whenUnavailable,
-    initialValue: ViewDataAvailability<Value> = .unavailable
+    refresh: (@MainActor (Owner) async -> Void)? = nil,
+    initialValue: ViewDataAvailability<Value> = .unavailable,
+    receive: (@MainActor (Source.Element, ViewDataSink<Value>) -> Void)? = nil
 ) = #externalMacro(module: "EnsembleMacros", type: "ViewDataSourceMacro")
 where Source.Element == Result<Value, SourceError>
+
+/// Declares a lazy source with application-defined element handling.
+///
+/// This overload accepts streams such as result/reset updates. The adapter runs on the main actor
+/// with a connection-scoped sink; obsolete sinks cannot modify a replacement connection. The same
+/// storage, initialization, ownership, and capture rules as the result-source overload apply.
+///
+/// - Parameters:
+///   - make: A prompt factory for the update sequence.
+///   - refresh: An optional async action that awaits a hot producer's refresh work.
+///   - initialValue: Declaration-site availability used to initialize the property.
+///   - receive: Translates each update into successful, failed, or reset presentation state.
+@attached(accessor, names: named(init), named(get))
+@attached(peer, names: prefixed(_))
+public macro ViewDataSource<Owner: AnyObject, Value, Source: AsyncSequence>(
+    make: @escaping @MainActor (Owner) -> Source,
+    refresh: (@MainActor (Owner) async -> Void)? = nil,
+    initialValue: ViewDataAvailability<Value> = .unavailable,
+    receive: @escaping @MainActor (Source.Element, ViewDataSink<Value>) -> Void
+) = #externalMacro(module: "EnsembleMacros", type: "ViewDataSourceMacro")

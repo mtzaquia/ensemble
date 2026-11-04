@@ -28,10 +28,11 @@ public enum ViewDataReloadBehavior {
     /// Keeps an active subscription and asks its upstream producer to publish a new result.
     ///
     /// If the sequence has already completed, the binding creates a fresh sequence before calling
-    /// the action. The action must publish into the sequence returned by the source factory.
+    /// the action. Reload awaits the action, which must publish into the sequence returned by
+    /// the source factory. Cancellation propagates through the caller's task.
     ///
-    /// - Parameter action: The main actor-isolated operation that starts the upstream refresh.
-    case refresh(@MainActor () -> Void)
+    /// - Parameter action: The main actor-isolated operation that awaits the upstream refresh.
+    case refresh(@MainActor () async -> Void)
 
     /// Installs no reload or failure-retry action for the binding.
     case disabled

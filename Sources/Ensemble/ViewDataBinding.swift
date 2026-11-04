@@ -27,12 +27,13 @@ import Foundation
 final class ViewDataBinding<Value> {
     private typealias Connect = @MainActor (ViewDataBinding, UInt) -> Bool
 
-    private let initialRefresh: ViewDataInitialRefresh
     private var connect: Connect
     private var reloadBehavior: ViewDataReloadBehavior
     private weak var destination: ViewData<Value>?
     private var observers: [UUID: CheckedContinuation<Void, Never>] = [:]
     private var task: Task<Void, Never>?
+    private var retryTask: Task<Void, Never>?
+    private var retryRevision: UInt = 0
     private var revision: UInt = 0
     private(set) var isConnected = false
     private var loadingToken: UInt?
@@ -43,10 +44,8 @@ final class ViewDataBinding<Value> {
     init<Source: AsyncSequence>(
         make: @escaping @MainActor () -> Source?,
         reload: ViewDataReloadBehavior,
-        initialRefresh: ViewDataInitialRefresh,
         receive: @escaping @MainActor (Source.Element, ViewDataSink<Value>) -> Void
     ) {
-        self.initialRefresh = initialRefresh
         self.reloadBehavior = reload
         self.connect = Self.connection(make: make, receive: receive)
     }
@@ -69,13 +68,19 @@ final class ViewDataBinding<Value> {
         }
     }
 
-    func reload() {
-        guard isConnected, !observers.isEmpty, let destination else { return }
+    func reload() async {
+        guard !Task.isCancelled, isConnected, !observers.isEmpty, let destination else { return }
         let identifier = ObjectIdentifier(destination)
         switch reloadBehavior {
         case .resubscribe:
             ensembleLog.ensembleDebug(.reloadRequested(destination: identifier, mode: .resubscribe))
             reconnect(startsLoading: true)
+            let connection = task
+            await withTaskCancellationHandler {
+                await connection?.value
+            } onCancel: {
+                connection?.cancel()
+            }
         case .refresh(let refresh):
             ensembleLog.ensembleDebug(.reloadRequested(destination: identifier, mode: .refresh))
             if task == nil {
@@ -83,7 +88,13 @@ final class ViewDataBinding<Value> {
             } else {
                 beginLoading()
             }
-            if isConnected { refresh() }
+            let currentRevision = revision
+            let token = loadingToken
+            if isConnected { await refresh() }
+            if Task.isCancelled, accepts(currentRevision), let token {
+                destination.finishLoading(token)
+                if loadingToken == token { loadingToken = nil }
+            }
         case .disabled:
             break
         }
@@ -94,6 +105,7 @@ final class ViewDataBinding<Value> {
         reload: ViewDataReloadBehavior,
         receive: @escaping @MainActor (Source.Element, ViewDataSink<Value>) -> Void
     ) {
+        cancelRetry()
         disconnect()
         connect = Self.connection(make: make, receive: receive)
         reloadBehavior = reload
@@ -102,23 +114,19 @@ final class ViewDataBinding<Value> {
 
     private func release(_ id: UUID) {
         guard let continuation = observers.removeValue(forKey: id) else { return }
-        if observers.isEmpty { disconnect() }
+        if observers.isEmpty {
+            cancelRetry()
+            disconnect()
+        }
         continuation.resume()
     }
 
     private func start() {
-        guard let destination else { return }
-        let shouldRefresh: Bool = switch initialRefresh {
-        case .always: true
-        case .whenUnavailable:
-            if case .unavailable = destination.latestValue { true } else { false }
-        case .never: false
-        }
-        let refresh: (@MainActor () -> Void)?
-        if case .refresh(let action) = reloadBehavior { refresh = action } else { refresh = nil }
-        // The factory registers or buffers before a hot producer is asked for its first result.
-        reconnect(startsLoading: refresh == nil || shouldRefresh)
-        if shouldRefresh, isConnected { refresh?() }
+        // Observing a hot source only subscribes. Its refresh action is invoked explicitly by
+        // reload/retry. Cold sequences start their work when connected.
+        let startsLoading: Bool
+        if case .refresh = reloadBehavior { startsLoading = false } else { startsLoading = true }
+        reconnect(startsLoading: startsLoading)
     }
 
     private func reconnect(startsLoading: Bool) {
@@ -134,7 +142,13 @@ final class ViewDataBinding<Value> {
         } else {
             destination.installRetryAction(ViewDataRetryAction { [weak self] in
                 guard let self, self.accepts(currentRevision) else { return }
-                self.reload()
+                self.retryTask?.cancel()
+                self.retryRevision &+= 1
+                let request = self.retryRevision
+                self.retryTask = Task { [weak self] in
+                    await self?.reload()
+                    if let self, self.retryRevision == request { self.retryTask = nil }
+                }
             })
         }
         if startsLoading { beginLoading() }
@@ -222,7 +236,14 @@ final class ViewDataBinding<Value> {
         }
     }
 
+    private func cancelRetry() {
+        retryRevision &+= 1
+        retryTask?.cancel()
+        retryTask = nil
+    }
+
     isolated deinit {
+        cancelRetry()
         disconnect()
     }
 }

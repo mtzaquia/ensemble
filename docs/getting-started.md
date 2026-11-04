@@ -53,22 +53,36 @@ that SwiftUI retains offscreen.
 
 ## Request another result
 
-Cold sources perform work when connected; `entries.reload()` cancels and resubscribes. Hot sources
+Cold sources perform work when connected; `await entries.reload()` cancels and resubscribes. Hot sources
 need a separate action that publishes through their existing subscription:
 
 ```swift
 entries = ViewData(
   initial,
   make: useCase.values,
-  refresh: useCase.refresh,
-  initialRefresh: .whenUnavailable
+  refresh: useCase.refresh
 )
 ```
 
-`initialRefresh` chooses whether connecting should invoke that action: `.always`, `.whenUnavailable`,
-or `.never`. Programmatic reload and failure retry use the same binding. Reloading inactive data
-does nothing. Keep the data instance stable and use `replaceSource(make:refresh:)` when dependencies
-change; successful content stays available through replacement.
+Connecting calls the factory without invoking the refresh action. A hot source can passively
+observe repository or use-case outcomes and replay a cached snapshot. The model requests initial
+loading explicitly and chooses the data layer's caching policy. Explicit reload and failure retry
+invoke the configured refresh action. Reloading inactive data does nothing.
+
+Keep the data instance stable and use `replaceSource(make:refresh:)` when dependencies change;
+successful content stays available through replacement. A replacement hot source is subscribed
+without requesting a refresh; call `await reload()` when the user explicitly requests new data.
+
+SwiftUI can await the producer's request directly:
+
+```swift
+.refreshable {
+  await viewModel.entries.reload()
+}
+```
+
+The configured refresh closure must await the actual work. Cold reloads await the new sequence's
+completion, so ongoing streams should provide a refresh action. Inactive data remains unchanged.
 
 For a single throwing asynchronous operation, use:
 

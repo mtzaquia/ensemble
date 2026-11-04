@@ -1,6 +1,6 @@
 # Sources and lifecycle
 
-Each `ViewData` owns one source binding. That binding holds the factory, refresh policy, active
+Each `ViewData` owns one source binding. That binding holds the factory, reload behavior, active
 subscription, and retry action. Consumers acquire observation leases; the last lease ending stops
 the subscription while preserving successful presentation state and source configuration.
 
@@ -12,8 +12,7 @@ Use a source-aware initializer or the optional `@ViewDataSource` property macro:
 let entries = ViewData(
   cachedAvailability,
   make: useCase.values,
-  refresh: useCase.reload,
-  initialRefresh: .whenUnavailable
+  refresh: useCase.reload
 )
 ```
 
@@ -39,26 +38,22 @@ ends its lease.
 With no refresh action, a reload cancels the previous subscription and invokes the factory again.
 Use a cold request sequence that creates independent work for each subscription.
 
-With a refresh action, reload keeps an active subscription and signals its producer. If the previous
-sequence completed, Ensemble reconnects before calling the action. Hot factories must establish
-observation synchronously or buffer events before iteration starts. The factory is invoked before
-initial refresh, but Ensemble cannot await arbitrary upstream registration.
+With a refresh action, reload keeps an active subscription and awaits its producer's action. If the previous
+sequence completed, Ensemble reconnects before calling the action. Hot factories should register
+observation synchronously or buffer updates so an immediate refresh cannot lose its result.
 
-`initialRefresh` controls only the hot refresh action at each connection:
-
-| Policy | Refresh on connection |
-| --- | --- |
-| `.always` | Always, including with successful retained data |
-| `.whenUnavailable` | Only without a successful value |
-| `.never` | Never; only register observation |
+Connecting itself never calls the refresh action. Hot sources may observe repository or use-case
+outcomes passively and replay cached snapshots. The model requests loading explicitly and chooses
+the data layer's caching policy. Ensemble cannot impose immediate emission on an arbitrary source.
+A synchronous initial value guarantees first-paint content independently of the stream.
 
 Successful empty collections and optional `nil` count as available. An idle hot source is not marked
-loading unless a refresh is requested. Cold sources begin loading on connection. Explicit reload
-marks the data loading and preserves its latest successful value.
+loading unless an explicit refresh is requested. Cold sources begin loading on connection.
+Explicit reload marks the data loading and preserves its latest successful value.
 
 ## Adapt source-specific updates
 
-Use the initializer's `receive` overload to translate other update types without erasing values:
+Use the macro's or initializer's optional `receive` adapter to translate other update types without erasing values:
 
 ```swift
 enum EntriesUpdate {
@@ -69,8 +64,7 @@ enum EntriesUpdate {
 let entries = ViewData<[Entry]>(
   cachedAvailability,
   make: useCase.updates,
-  reload: .refresh(useCase.reload),
-  initialRefresh: .whenUnavailable
+  reload: .refresh(useCase.reload)
 ) { update, sink in
   switch update {
   case .result(let result):
@@ -85,7 +79,8 @@ The handler runs on the main actor after the binding accepts the element. Its `V
 to that connection: retaining it does not let obsolete work update a replacement connection. Reset
 clears presentation without stopping observation. A later source result can recover it.
 
-Custom adapters use `ViewDataReloadBehavior`: `.resubscribe`, `.refresh(action)`, or `.disabled`.
+With the `refresh` spelling, custom adapters use the same async refresh actions as result sources.
+The lower-level `reload` initializer parameter also accepts `ViewDataReloadBehavior`: `.resubscribe`, `.refresh(action)`, or `.disabled`.
 Disabled sources expose no programmatic reload or failure retry action. Use the same `receive`
 overload on `replaceSource` when changing an adapted producer.
 
@@ -96,8 +91,9 @@ entries.replaceSource(make: replacement.values, refresh: replacement.reload)
 ```
 
 Replacement cancels the old subscription, invalidates its sink and retry action, and reconnects active
-observers immediately. Inactive data retains the new factory until observed. The original
-`initialRefresh` policy remains fixed; replacement accepts neither a new seed nor a policy.
+observers immediately. Inactive data retains the new factory until observed. Replacement does not
+invoke the new refresh action or accept a new seed. Hot observation can remain passive;
+explicit `await reload()` requests a refresh.
 
 The successful value stays in the same `ViewData` and is visible to every consumer. Reserve
 `reset()` for explicit invalidation, such as changing accounts. Replacing the `ViewData` instance

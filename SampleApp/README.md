@@ -6,7 +6,9 @@ it demonstrates.
 
 All stream-backed models declare their sources at initialization. `AsyncContent` manages their
 observation, and the models reload directly through their data properties. One-shot examples use
-`await entries.load(...)`; no separate context or binding-start method is required.
+`await entries.load(...)`; no separate context or binding-start method is required. Reload is async:
+Screen replacement's pull-to-refresh awaits the new cold request, and custom async refresh actions
+can await producer work directly.
 
 ## Run a scenario
 
@@ -28,7 +30,8 @@ The model uses source-aware `ViewData` initialization. A separate model demonstr
 
 1. The first source exposes cached rows immediately.
 2. Choose **Swap source**. The model keeps its successful value in the same instance, and the
-   view shows those rows with a Retained badge instead of placeholders.
+   view keeps showing those rows. Connecting the new source does not request a refresh.
+   Choose **Reload** to enter loading with a Retained badge instead of placeholders.
 3. Choose **Fail response** to retain those rows through failure, then **Reload** and
    **Deliver response** to recover with the new source's rows.
 4. Choose **Show macro source** and scroll its rows into view. Its connection count changes from

@@ -111,8 +111,9 @@ struct EntriesView: View {
 ```
 
 No context property, start method, or view task is needed for this path. For hot sources, pass a
-`refresh` action and choose `initialRefresh: .always`, `.whenUnavailable`, or `.never`. Cold sources
-fetch through their sequence and resubscribe when `entries.reload()` is called.
+`refresh` action for explicit reloads and retries. Hot streams can simply observe repository or
+use-case outcomes; the model requests loading explicitly. Caching policy stays in the data layer.
+Cold sources fetch through their sequence and resubscribe when `await entries.reload()` is called.
 
 Keep the data instance stable and swap its producer when dependencies change:
 
@@ -124,7 +125,8 @@ viewModel.entries.replaceSource(
 ```
 
 The existing successful value stays in `entries.latestValue`. Replacement reconnects active
-observation using the original `initialRefresh` policy; it does not accept a new seed or policy.
+observation without invoking the refresh action. The new producer decides what to do on subscription;
+replacement does not accept a new seed.
 For an account change, call `entries.reset()` before replacement to discard inappropriate content.
 See [Source-backed data and v3 migration](docs/source-backed-data.md).
 

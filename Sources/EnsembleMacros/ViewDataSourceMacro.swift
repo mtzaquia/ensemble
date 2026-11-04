@@ -138,8 +138,8 @@ public struct ViewDataSourceMacro: AccessorMacro, PeerMacro {
 
     private static func validateCallbacks(_ node: AttributeSyntax) throws {
         guard case .argumentList(let arguments) = node.arguments else { return }
-        for argument in arguments where ["make", "refresh"].contains(argument.label?.text) {
-            if argument.label?.text == "refresh", argument.expression.is(NilLiteralExprSyntax.self) { continue }
+        for argument in arguments where ["make", "refresh", "receive"].contains(argument.label?.text) {
+            if argument.label?.text != "make", argument.expression.is(NilLiteralExprSyntax.self) { continue }
             guard let closure = argument.expression.as(ClosureExprSyntax.self) else {
                 throw DiagnosticsError(diagnostics: [Diagnostic(
                     node: Syntax(argument.expression),
@@ -151,7 +151,7 @@ public struct ViewDataSourceMacro: AccessorMacro, PeerMacro {
             if let reference = visitor.reference {
                 throw DiagnosticsError(diagnostics: [Diagnostic(
                     node: reference,
-                    message: SourceDiagnostic(message: "@ViewDataSource callbacks must use their owner parameter instead of self or super")
+                    message: SourceDiagnostic(message: "@ViewDataSource callbacks must not capture instance self or super")
                 )])
             }
         }
@@ -181,6 +181,8 @@ public struct ViewDataSourceMacro: AccessorMacro, PeerMacro {
         }
         let args = arguments(node, context: context)
         guard let make = args["make"] else { return [] }
+        let receive = args["receive"].flatMap { $0 == "nil" ? nil : $0 }
+            ?? "{ result, sink in sink.receive(result) }"
         return [
             """
             @storageRestrictions(initializes: _\(raw: name))
@@ -194,7 +196,7 @@ public struct ViewDataSourceMacro: AccessorMacro, PeerMacro {
                     owner: self,
                     make: \(raw: make),
                     refresh: \(raw: args["refresh"] ?? "nil"),
-                    initialRefresh: \(raw: args["initialRefresh"] ?? ".whenUnavailable")
+                    receive: \(raw: receive)
                 )
                 return _\(raw: name)
             }

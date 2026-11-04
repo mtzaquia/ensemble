@@ -41,6 +41,11 @@ nonisolated final class SampleAppUITests: XCTestCase {
         swap.tap()
         XCTAssertTrue(waitForLabelContaining("Second", on: element("sample.source-lifecycle.current")))
         XCTAssertTrue(waitForLabelContaining("yes", on: element("sample.source-lifecycle.model-value")))
+        XCTAssertTrue(waitForLabelContaining("Latest", on: element("sample.source-lifecycle.origin")))
+        let reload = app.buttons["sample.source-lifecycle.reload"]
+        scrollUntilHittable(reload, direction: .up)
+        reload.tap()
+        scrollUntilHittable(element("sample.source-lifecycle.origin"), direction: .down)
         XCTAssertTrue(waitForLabelContaining("Retained", on: element("sample.source-lifecycle.origin")))
         XCTAssertTrue(element(A11y.entry(10)).exists, app.debugDescription)
         XCTAssertFalse(element(A11y.entry(0)).exists)

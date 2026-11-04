@@ -33,6 +33,7 @@ struct SourceHostingTests {
     @Test("A hidden AsyncContent starts its source without a task on an ancestor")
     func hiddenSourceStarts() async throws {
         let useCase = HostedSource()
+        useCase.valueOnSubscription = 42
         let data = ViewData<Int>(make: useCase.values, refresh: useCase.reload)
         let host = NSHostingView(rootView: AsyncContent(data) { value, _ in Text("\(value)") })
         host.frame = NSRect(x: 0, y: 0, width: 300, height: 300)
@@ -43,6 +44,7 @@ struct SourceHostingTests {
         }
         #expect(useCase.connections == 1)
         #expect(data.latestValue == .available(42))
+        #expect(useCase.refreshes == 0)
     }
 
     @Test("A List retains real model data while its source is replaced")
@@ -62,9 +64,12 @@ struct SourceHostingTests {
         let replacement = HostedSource()
         replacement.deliversOnRefresh = false
         model.data.replaceSource(make: replacement.values, refresh: replacement.reload)
-        try await render(host) {
-            replacement.connections == 1 && model.data === previous && probe.samples.contains("41-retained")
-        }
+        try await render(host) { replacement.connections == 1 }
+        #expect(model.data === previous)
+        #expect(replacement.refreshes == 0)
+        #expect(probe.lastSample == "41-latest")
+        await model.data.reload()
+        try await render(host) { probe.samples.contains("41-retained") }
         // Give source startup's metadata and loading updates a frame to render as well.
         try await Task.sleep(for: .milliseconds(30))
         host.layoutSubtreeIfNeeded()
@@ -87,15 +92,19 @@ struct SourceHostingTests {
 
 private final class HostedSource {
     var connections = 0
+    var refreshes = 0
+    var valueOnSubscription: Int?
     var deliversOnRefresh = true
     var continuation: AsyncStream<Result<Int, HostedError>>.Continuation?
     func values() -> AsyncStream<Result<Int, HostedError>> {
         connections += 1
         let (stream, continuation) = AsyncStream<Result<Int, HostedError>>.makeStream()
         self.continuation = continuation
+        if let valueOnSubscription { continuation.yield(.success(valueOnSubscription)) }
         return stream
     }
     func reload() {
+        refreshes += 1
         if deliversOnRefresh { continuation?.yield(.success(42)) }
     }
 }
@@ -108,8 +117,7 @@ private final class HostedModel {
 
     @ViewDataSource(
         make: { (model: Self) in model.useCase.values() },
-        refresh: { model in model.useCase.reload() },
-        initialRefresh: .always
+        refresh: { model in model.useCase.reload() }
     )
     @ObservationIgnored
     var data: ViewData<Int>

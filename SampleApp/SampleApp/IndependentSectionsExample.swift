@@ -129,9 +129,12 @@ private final class IndependentSectionsViewModel {
     }
 
     func reload() {
-        activity.reload()
-        account.reload()
-        tip.reload()
+        Task {
+            async let activityRequest: Void = activity.reload()
+            async let accountRequest: Void = account.reload()
+            async let tipRequest: Void = tip.reload()
+            _ = await (activityRequest, accountRequest, tipRequest)
+        }
     }
 }
 
