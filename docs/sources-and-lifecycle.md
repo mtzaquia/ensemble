@@ -51,6 +51,41 @@ Successful empty collections and optional `nil` count as available. An idle hot 
 loading unless an explicit refresh is requested. Cold sources begin loading on connection.
 Explicit reload marks the data loading and preserves its latest successful value.
 
+## Reload several sources together
+
+```swift
+await Ensemble.reload(model.profile, model.activity, model.notifications)
+```
+
+The sources can hold different value types. The batch subscribes to every managed, reload-enabled
+source before dispatching requests concurrently. It holds temporary observation leases until all
+actions finish, then releases only those leases. Existing consumers keep observing. A consumer
+that needs queued or ongoing hot-stream updates after action completion must keep an observation
+lease, such as `AsyncContent` or a task awaiting `observe()`. Batch completion alone does not
+establish that each stream outcome has been consumed. A newly connected cold source uses that
+first subscription; an already observed cold source resubscribes.
+
+Each source applies its own results, failures, and resets. Failure in one source does not cancel
+siblings or throw from the batch. A successful section can update while another fails, and failure
+retry remains local to that source. The return value is `Void`: completion means all actions ended,
+not that all sources succeeded. Outcomes can be processed asynchronously through the streams, so
+the batch does not infer an aggregate result from presentation phases.
+
+Cancellation propagates to outstanding request actions and cold subscriptions, then releases the
+batch's leases. Producers remain responsible for cooperative cancellation. Plain data, disabled
+reloads, and an empty or already-cancelled batch do nothing. Duplicate instances reload once.
+
+### Overlapping requests
+
+Batch and direct reload calls do not coalesce across invocations. Hot sources may run their refresh
+action more than once; their data layer decides how overlapping work is handled. A later cold
+reload cancels and replaces the earlier subscription. A batch awaiting that earlier cold request
+can finish while the newer direct request continues.
+
+Each active direct request holds its own lease, so another batch or consumer ending does not
+disconnect it. A direct `data.reload()` called before activation remains a no-op; the batch establishes
+observation itself. Avoid launching both for the same source unless both requests are intended.
+
 ## Adapt source-specific updates
 
 Use the macro's or initializer's optional `receive` adapter to translate other update types without erasing values:

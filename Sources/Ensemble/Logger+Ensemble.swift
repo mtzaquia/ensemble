@@ -23,7 +23,7 @@
 import Foundation
 import os
 
-/// Global Ensemble diagnostic configuration.
+/// Ensemble request operations and global diagnostic configuration.
 public enum Ensemble {
     /// The amount of lifecycle detail emitted by Ensemble in debug builds.
     public enum DebugLogLevel: Equatable, Sendable {

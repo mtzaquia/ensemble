@@ -31,6 +31,7 @@ final class ViewDataBinding<Value> {
     private var reloadBehavior: ViewDataReloadBehavior
     private weak var destination: ViewData<Value>?
     private var observers: [UUID: CheckedContinuation<Void, Never>] = [:]
+    private var reloadObservers = 0
     private var task: Task<Void, Never>?
     private var retryTask: Task<Void, Never>?
     private var retryRevision: UInt = 0
@@ -38,7 +39,7 @@ final class ViewDataBinding<Value> {
     private(set) var isConnected = false
     private var loadingToken: UInt?
 
-    var observerCount: Int { observers.count }
+    var observerCount: Int { observers.count + reloadObservers }
     var isRunning: Bool { task != nil }
 
     init<Source: AsyncSequence>(
@@ -61,7 +62,7 @@ final class ViewDataBinding<Value> {
                 }
                 self.destination = destination
                 observers[id] = continuation
-                if observers.count == 1 { start() }
+                if observerCount == 1 { start() }
             }
         } onCancel: {
             Task { @MainActor [weak self] in self?.release(id) }
@@ -69,18 +70,13 @@ final class ViewDataBinding<Value> {
     }
 
     func reload() async {
-        guard !Task.isCancelled, isConnected, !observers.isEmpty, let destination else { return }
+        guard !Task.isCancelled, isConnected, observerCount > 0, let destination else { return }
         let identifier = ObjectIdentifier(destination)
         switch reloadBehavior {
         case .resubscribe:
             ensembleLog.ensembleDebug(.reloadRequested(destination: identifier, mode: .resubscribe))
             reconnect(startsLoading: true)
-            let connection = task
-            await withTaskCancellationHandler {
-                await connection?.value
-            } onCancel: {
-                connection?.cancel()
-            }
+            await waitForConnection(task)
         case .refresh(let refresh):
             ensembleLog.ensembleDebug(.reloadRequested(destination: identifier, mode: .refresh))
             if task == nil {
@@ -100,6 +96,43 @@ final class ViewDataBinding<Value> {
         }
     }
 
+    // Batch leases are acquired before dispatching requests. Readiness is local to the binding;
+    // arbitrary upstream asynchronous registration still belongs to the source producer.
+    func acquireReloadObservation(
+        _ destination: ViewData<Value>
+    ) -> (reuseConnection: Bool, connection: Task<Void, Never>?)? {
+        guard !Task.isCancelled else { return nil }
+        if case .disabled = reloadBehavior { return nil }
+        let wasObserved = observerCount > 0
+        self.destination = destination
+        reloadObservers += 1
+        if !wasObserved { start() }
+        let reuseConnection: Bool
+        if case .resubscribe = reloadBehavior { reuseConnection = !wasObserved } else { reuseConnection = false }
+        return (reuseConnection, task)
+    }
+
+    // An explicit single-source reload borrows an active binding for its whole request. Retry
+    // tasks use reload() directly so they remain cancellable when the last external lease ends.
+    func retainActiveReloadObservation() -> Bool {
+        guard !Task.isCancelled, isConnected, observerCount > 0 else { return false }
+        reloadObservers += 1
+        return true
+    }
+
+    func releaseReloadObservation() {
+        reloadObservers -= 1
+        stopIfUnobserved()
+    }
+
+    func waitForConnection(_ connection: Task<Void, Never>?) async {
+        await withTaskCancellationHandler {
+            await connection?.value
+        } onCancel: {
+            connection?.cancel()
+        }
+    }
+
     func replace<Source: AsyncSequence>(
         make: @escaping @MainActor () -> Source,
         reload: ViewDataReloadBehavior,
@@ -109,16 +142,20 @@ final class ViewDataBinding<Value> {
         disconnect()
         connect = Self.connection(make: make, receive: receive)
         reloadBehavior = reload
-        if !observers.isEmpty { start() }
+        if observerCount > 0 { start() }
     }
 
     private func release(_ id: UUID) {
         guard let continuation = observers.removeValue(forKey: id) else { return }
-        if observers.isEmpty {
+        stopIfUnobserved()
+        continuation.resume()
+    }
+
+    private func stopIfUnobserved() {
+        if observerCount == 0 {
             cancelRetry()
             disconnect()
         }
-        continuation.resume()
     }
 
     private func start() {

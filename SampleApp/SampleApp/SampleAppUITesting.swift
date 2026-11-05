@@ -61,7 +61,7 @@ enum SampleScenario: String, CaseIterable, Identifiable {
         case .animatedReordering:
             "Presentation transitions and consumer-owned stable-ID row animation."
         case .independentSections:
-            "Several streams drive separate parts of one list."
+            "Reload several sections together while failures and retries remain independent."
         }
     }
 

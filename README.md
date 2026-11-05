@@ -115,6 +115,15 @@ No context property, start method, or view task is needed for this path. For hot
 use-case outcomes; the model requests loading explicitly. Caching policy stays in the data layer.
 Cold sources fetch through their sequence and resubscribe when `await entries.reload()` is called.
 
+For a screen with several independent chunks, request them together:
+
+```swift
+await Ensemble.reload(viewModel.profile, viewModel.activity, viewModel.notifications)
+```
+
+The batch starts requests concurrently, waits for all actions, and lets each chunk present its own
+failure. It establishes temporary observation for startup and propagates caller cancellation.
+
 Keep the data instance stable and swap its producer when dependencies change:
 
 ```swift

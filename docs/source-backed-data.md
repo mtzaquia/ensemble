@@ -146,6 +146,24 @@ it cannot prove that a helper or returned sequence avoids retaining the owner pa
 Factories do not hold their owning model between invocations. A returned sequence can still retain
 that model if its producer captures it.
 
+## Request a whole screen
+
+```swift
+func reload() async {
+  await Ensemble.reload(profile, activity, notifications)
+}
+```
+
+Use the same model method from `.task` and `.refreshable` when the sources are passive streams
+that need an explicit request. The batch establishes observation, starts the configured requests
+concurrently, and awaits every action. Different value types are accepted. Each source keeps its
+own presentation state and failures; siblings continue after one source fails. Cancellation
+propagates to outstanding work. Batch completion is not an aggregate success result.
+
+The batch releases its temporary leases after all actions finish. Rendered consumers keep streaming
+through their own leases. See [Sources and lifecycle](sources-and-lifecycle.md#reload-several-sources-together)
+for cold startup behavior and overlapping direct reloads.
+
 ## Adapt result/reset streams
 
 Result streams use the default adapter. Supply `receive` for a source such as Continuum's

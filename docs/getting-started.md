@@ -84,6 +84,35 @@ SwiftUI can await the producer's request directly:
 The configured refresh closure must await the actual work. Cold reloads await the new sequence's
 completion, so ongoing streams should provide a refresh action. Inactive data remains unchanged.
 
+## Reload a screen's independent chunks
+
+Keep one screen-level request method even when the data properties have different value types:
+
+```swift
+func reload() async {
+  await Ensemble.reload(profile, activity, notifications)
+}
+```
+
+```swift
+.task { await viewModel.reload() }
+.refreshable { await viewModel.reload() }
+```
+
+The batch starts requests concurrently and waits for every action. Each chunk handles its own
+success, failure, and retry UI; one failure does not cancel the others. Caller cancellation
+propagates to outstanding requests. The batch establishes temporary observation before requesting,
+so startup does not race rendering. A cold source first connected by the batch uses that initial
+subscription instead of starting twice. Cold sources that already fetch on observation do not
+need an additional startup batch just to load their first value.
+
+A successful batch return means the actions finished, not that every source succeeded. Stream
+outcomes may be delivered separately. `AsyncContent` keeps its own observation for those updates
+after batch completion. Repeated instances reload once; unmanaged or reload-disabled
+data is ignored. See [Sources and lifecycle](sources-and-lifecycle.md) for overlapping requests.
+
+## Load one value
+
 For a single throwing asynchronous operation, use:
 
 ```swift

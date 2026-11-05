@@ -77,6 +77,29 @@ entire List; no additional List animation modifier is needed for its phase-drive
 Final-state UI tests do not prove motion; inspect the scenario directly in Simulator for that part
 of the contract.
 
+## Independent sections and batch reload
+
+Launch `UI_TESTING --scenario=independent-sections`. This screen declares passive update streams
+and uses one `await Ensemble.reload(activity, account, tip)` model method from startup,
+pull-to-refresh, and the **Reload every section** button.
+
+1. Cached account rows are ready on the first paint.
+2. The initial batch requests all three sections concurrently. Activity succeeds while account and
+   tip fail. Activity renders immediately; cached account rows remain visible.
+3. Retry the tip alone. Its request recovers without changing account or activity.
+4. Choose **Reload every section** or pull to refresh. The next batch recovers the account too.
+
+The batch owns temporary observation while its actions run. Each `AsyncContent` keeps its own
+lease, state, and retry behavior afterward. Completion means all requests finished; it does not
+combine the sections into a single success or failure.
+
+| Promise | Evidence | Primary proof |
+| --- | --- | --- |
+| Different value types reload together | Entry arrays and a text tip share one batch call | Package tests and sample UI test |
+| Partial failure leaves siblings running | Activity succeeds while account and tip fail | Package tests and sample UI test |
+| Per-section retry remains independent | Tip recovery leaves cached account rows visible | Package tests and sample UI test |
+| Cancellation releases only the batch's leases | Existing consumer continues receiving updates | Package tests |
+
 ## Cached refresh
 
 Launch `UI_TESTING --scenario=cached-refresh` for deterministic UI assertions, or open Cached

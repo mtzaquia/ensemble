@@ -277,6 +277,8 @@ nonisolated final class SampleAppUITests: XCTestCase {
         XCTAssertTrue(retryTip.waitForExistence(timeout: 2))
         retryTip.tap()
         XCTAssertTrue(element(A11y.independentSectionsTip).waitForExistence(timeout: 3))
+        XCTAssertTrue(element(A11y.entry(300)).exists, "Retrying the tip disturbed successful activity")
+        XCTAssertTrue(element(A11y.entry(10)).exists, "Retrying the tip disturbed retained account content")
 
         let reload = app.buttons[A11y.independentSectionsReload]
         XCTAssertTrue(reload.waitForExistence(timeout: 2))

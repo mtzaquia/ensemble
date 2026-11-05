@@ -269,8 +269,12 @@ extension ViewData {
     /// Hot sources receive their refresh action; cold sources resubscribe. This signals the
     /// producer and awaits its refresh action. Cold sources await the replacement sequence's
     /// completion; use a refresh action for ongoing streams. Cancelling a cold reload cancels
-    /// that connection. Inactive, unmanaged, or already-cancelled calls do nothing.
+    /// that connection. The request holds its own observation lease until it ends, so another
+    /// consumer or batch finishing does not disconnect it. Inactive, unmanaged, or already-cancelled
+    /// calls do nothing; use `Ensemble.reload` to establish observation for startup requests.
     public func reload() async {
-        await binding?.reload()
+        guard let binding, binding.retainActiveReloadObservation() else { return }
+        defer { binding.releaseReloadObservation() }
+        await binding.reload()
     }
 }
