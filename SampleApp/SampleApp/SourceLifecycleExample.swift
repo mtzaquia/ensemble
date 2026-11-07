@@ -28,11 +28,13 @@ struct SourceLifecycleExample: View {
     @State private var model = SourceLifecycleModel()
     @State private var macroModel = MacroSourceModel()
     @State private var showsMacro = false
+    @State private var showsBadge = false
+    @State private var previousMacroSource: SourceLabUseCase?
 
     var body: some View {
         List {
             Section {
-                Text("The first source is seeded before rendering. Replace its factory to keep the same model data and rows. Connection only subscribes; choose Reload to request a refresh, then deliver a response.")
+                Text("The first source is seeded before rendering. Change the selected source to rebind automatically while keeping the same model data and rows. Connection only subscribes; choose Reload to request a refresh, then deliver a response.")
                 LabeledContent("Current source", value: model.isSecond ? "Second" : "First")
                     .accessibilityIdentifier("sample.source-lifecycle.current")
                 Text("The model has a value: \(model.hasValue ? "yes" : "no")")
@@ -59,6 +61,12 @@ struct SourceLifecycleExample: View {
             }
 
             Section {
+                Button("Read badge") { showsBadge = true }
+                    .accessibilityIdentifier("sample.source-lifecycle.read-badge")
+                if showsBadge {
+                    Text("Badge count: \(macroModel.badgeCount)")
+                        .accessibilityIdentifier("sample.source-lifecycle.badge")
+                }
                 Button(showsMacro ? "Hide macro source" : "Show macro source") {
                     showsMacro.toggle()
                 }
@@ -66,16 +74,32 @@ struct SourceLifecycleExample: View {
                 Text("Macro connections: \(macroModel.useCase.connections)")
                     .accessibilityIdentifier("sample.source-lifecycle.connections")
                 if showsMacro {
-                    AsyncContent(macroModel.entries) { entries, source in
-                        SampleEntryRows(entries: entries, source: source)
+                    if macroModel.canShowEntries {
+                        AsyncContent(macroModel.entries) { entries, source in
+                            SampleEntryRows(entries: entries, source: source)
+                        }
+                    } else {
+                        Text("The data gate is waiting for a response.")
+                            .accessibilityIdentifier("sample.source-lifecycle.gate")
                     }
-                    Button("Deliver macro response") { macroModel.useCase.deliver() }
-                        .accessibilityIdentifier("sample.source-lifecycle.deliver-macro")
+                }
+                Button("Deliver macro response") { macroModel.useCase.deliver() }
+                    .accessibilityIdentifier("sample.source-lifecycle.deliver-macro")
+                Button("Release macro model") {
+                    previousMacroSource = macroModel.useCase
+                    showsBadge = false
+                    showsMacro = false
+                    macroModel = MacroSourceModel()
+                }
+                .accessibilityIdentifier("sample.source-lifecycle.release-model")
+                if let previousMacroSource {
+                    Text("Previous active connections: \(previousMacroSource.activeConnections)")
+                        .accessibilityIdentifier("sample.source-lifecycle.previous-connections")
                 }
             } header: {
                 Text("Property macro")
             } footer: {
-                Text("Reading state starts no work. Showing the consumer connects the declared source without a model-level macro or start method.")
+                Text("Read the badge or show the data gate to activate the source. Hidden content keeps its connection while the model lives. Release the model to cancel it.")
             }
         }
         .navigationTitle("Source lifecycle")
@@ -85,7 +109,13 @@ struct SourceLifecycleExample: View {
 
 @Observable
 private final class SourceLifecycleModel {
-    let entries: ViewData<[SampleEntry]>
+    @ViewDataSource(
+        initial: { _ in .available(SampleEntry.cached) },
+        make: { (model: Self) in model.currentSource.values() },
+        refresh: { model in model.currentSource.reload() }
+    )
+    @ObservationIgnored
+    var entries: ViewData<[SampleEntry]>
     private(set) var isSecond = false
     private let first = SourceLabUseCase(seed: SampleEntry.cached)
     private let second = SourceLabUseCase(seed: nil)
@@ -94,17 +124,10 @@ private final class SourceLifecycleModel {
         if case .available = entries.latestValue { true } else { false }
     }
 
-    init() {
-        entries = ViewData(
-            .available(SampleEntry.cached), owner: first,
-            make: { $0.values() }, refresh: { $0.reload() }
-        )
-    }
+    private var currentSource: SourceLabUseCase { isSecond ? second : first }
 
     func swap() {
         isSecond.toggle()
-        let source = isSecond ? second : first
-        entries.replaceSource(make: source.values, refresh: source.reload)
     }
 
     func deliver() { (isSecond ? second : first).deliver() }
@@ -114,10 +137,15 @@ private final class SourceLifecycleModel {
 private final class MacroSourceModel {
     let useCase = SourceLabUseCase(seed: nil)
 
+    var badgeCount: Int {
+        if case .available(let entries) = entries.latestValue { entries.count } else { 0 }
+    }
+
+    var canShowEntries: Bool { badgeCount > 0 }
+
     @ViewDataSource(
         make: { (model: Self) in model.useCase.values() },
-        refresh: { model in model.useCase.reload() },
-        initialValue: .available(SampleEntry.cached)
+        refresh: { model in model.useCase.reload() }
     )
     var entries: ViewData<[SampleEntry]>
 }
@@ -125,19 +153,27 @@ private final class MacroSourceModel {
 @Observable
 private final class SourceLabUseCase {
     private(set) var connections = 0
+    private(set) var activeConnections = 0
+    @ObservationIgnored private var connectionCount = 0
     @ObservationIgnored private var seed: [SampleEntry]?
     @ObservationIgnored private var continuations: [UUID: AsyncStream<Result<[SampleEntry], SampleFailure>>.Continuation] = [:]
 
     init(seed: [SampleEntry]?) { self.seed = seed }
 
     func values() -> AsyncStream<Result<[SampleEntry], SampleFailure>> {
-        connections += 1
+        connectionCount += 1
+        connections = connectionCount
         let id = UUID()
         let (stream, continuation) = AsyncStream<Result<[SampleEntry], SampleFailure>>.makeStream()
         continuations[id] = continuation
+        activeConnections = continuations.count
         if let seed { continuation.yield(.success(seed)) }
         continuation.onTermination = { [weak self] _ in
-            Task { @MainActor [weak self] in self?.continuations[id] = nil }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.continuations[id] = nil
+                self.activeConnections = self.continuations.count
+            }
         }
         return stream
     }

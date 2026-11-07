@@ -10,11 +10,10 @@
 `Ensemble` is a SwiftUI presentation-state library for composing self-contained, reloadable
 features.
 
-A `ViewData` value remembers successful data and its current lifecycle phase. In the v3 prototype,
-it can also own a lazy asynchronous source: `AsyncContent` connects it automatically, and replacing
-the source preserves the same successful model data through refresh and failure. `@ViewDataSource` offers
-property-level shorthand, with no model-level macro or projected value. Each data value owns its
-binding; one-shot operations use `await entries.load(...)`.
+A `ViewData` value remembers successful data and its current lifecycle phase. Declare its source
+with `@ViewDataSource`; first access activates it for the model’s lifetime. The source is rebuilt when
+observable inputs read by its factory change, while the same presentation state retains success.
+One-shot operations use `await entries.load(...)` on ordinary `ViewData`.
 
 - Seed presentation state immediately, load one value, or bind a stream of updates.
 - Distinguish not-yet-loaded, loaded-but-empty, and reset observable state.
@@ -42,11 +41,13 @@ dependencies: [
 ]
 ```
 
-Add the `Ensemble` product to the app target, then `import Ensemble` where it is used.
+Add the `Ensemble` product to the app target, then `import Ensemble` where it is used. Source
+properties use the `EnsembleMacros` compiler plugin; approve Xcode's macro trust prompt. Configure
+macro trust in unattended build environments before building the app.
 
 ## Five-minute start
 
-Initialize presentation state with a synchronous snapshot and a lazy result-sequence factory:
+Declare a synchronous seed and a lazy source beside the presentation property:
 
 ```swift
 import Ensemble
@@ -62,11 +63,11 @@ enum EntryFailure: Error, Sendable {
 
 @MainActor
 final class EntriesUseCase {
+  let cachedEntries = [Entry(id: 1, title: "Cached entry")]
+
   func values() -> AsyncStream<Result<[Entry], EntryFailure>> {
     AsyncStream { continuation in
-      continuation.yield(.success([
-        Entry(id: 1, title: "The latest value"),
-      ]))
+      continuation.yield(.success([Entry(id: 1, title: "The latest value")]))
       continuation.finish()
     }
   }
@@ -74,13 +75,16 @@ final class EntriesUseCase {
 
 @MainActor
 final class EntriesViewModel {
-  let entries: ViewData<[Entry]>
+  let useCase: EntriesUseCase
 
-  init(
-    useCase: EntriesUseCase,
-    initialEntries: ViewDataAvailability<[Entry]> = .unavailable
-  ) {
-    entries = ViewData(initialEntries, make: useCase.values)
+  @ViewDataSource(
+    initial: { (model: Self) in .available(model.useCase.cachedEntries) },
+    make: { model in model.useCase.values() }
+  )
+  var entries: ViewData<[Entry]>
+
+  init(useCase: EntriesUseCase) {
+    self.useCase = useCase
   }
 }
 ```
@@ -115,6 +119,11 @@ No context property, start method, or view task is needed for this path. For hot
 use-case outcomes; the model requests loading explicitly. Caching policy stays in the data layer.
 Cold sources fetch through their sequence and resubscribe when `await entries.reload()` is called.
 
+Source properties are get-only and seeded on first read. Activation follows after the getter
+returns; views, badges, and derived conditions share the connection until the model is released.
+Every callback receives the weakly held model, including `receive(owner, element, sink)`.
+The optional adapter is unnecessary for ordinary `Result` streams. In `@Observable` models, put `@ObservationIgnored` after `@ViewDataSource`.
+
 For a screen with several independent chunks, request them together:
 
 ```swift
@@ -122,21 +131,13 @@ await Ensemble.reload(viewModel.profile, viewModel.activity, viewModel.notificat
 ```
 
 The batch starts requests concurrently, waits for all actions, and lets each chunk present its own
-failure. It establishes temporary observation for startup and propagates caller cancellation.
+failure. Each call behaves like `await data.reload()` and propagates caller cancellation.
+Finishing a request keeps the model-owned subscription alive for later updates.
 
-Keep the data instance stable and swap its producer when dependencies change:
-
-```swift
-viewModel.entries.replaceSource(
-  make: anotherUseCase.values,
-  refresh: anotherUseCase.reload
-)
-```
-
-The existing successful value stays in `entries.latestValue`. Replacement reconnects active
-observation without invoking the refresh action. The new producer decides what to do on subscription;
-replacement does not accept a new seed.
-For an account change, call `entries.reset()` before replacement to discard inappropriate content.
+Keep source selection in the factory. For example, `model.repository.values(for: model.filter)`
+tracks an observable `filter`; changing it automatically cancels the old subscription and builds
+a new one. Successful content remains in the same `ViewData`. Use `reset()` before changing an
+account or another domain identity when the previous value should be discarded.
 See [Source-backed data and v3 migration](docs/source-backed-data.md).
 
 When adding skeletons, use `loading: .placeholder(...)` and redact only `source == .placeholder`.
@@ -145,8 +146,8 @@ The [presentation guide](docs/presentation-policies.md) covers loading, failure,
 
 ## Documentation
 
-- [Source-backed data and v3 migration](docs/source-backed-data.md) — automatic observation, property
-  macros, source replacement, and lifetime boundaries.
+- [Source-backed data and v3 migration](docs/source-backed-data.md) — lazy activation, property
+  macros, observed source inputs, and lifetime boundaries.
 - [Getting started](docs/getting-started.md) — connect a source, choose its reload behavior, and
   render the first result.
 - [Presentation policies](docs/presentation-policies.md) — choose placeholder, retained, hidden,

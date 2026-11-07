@@ -74,13 +74,11 @@ struct ScreenReplacementExample: View {
 
 @Observable
 private final class ScreenReplacementViewModel {
-    let entries: ViewData<[SampleEntry]>
+    @ViewDataSource(make: { (model: Self) in model.useCase.values() })
+    @ObservationIgnored
+    var entries: ViewData<[SampleEntry]>
 
     @ObservationIgnored private let useCase = ScreenReplacementUseCase()
-
-    init() {
-        entries = ViewData(make: useCase.values)
-    }
 
     func reload() {
         Task { await entries.reload() }

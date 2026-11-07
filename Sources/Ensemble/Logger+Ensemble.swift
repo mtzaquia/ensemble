@@ -62,11 +62,6 @@ enum EnsembleReloadMode: String {
     case disabled
 }
 
-enum EnsembleLogSeverity: Equatable {
-    case debug
-    case info
-}
-
 enum EnsembleLogEvent {
     case loadStarted(destination: ObjectIdentifier)
     case loadSucceeded(destination: ObjectIdentifier)
@@ -78,7 +73,6 @@ enum EnsembleLogEvent {
     case bindingReceivedFailure(destination: ObjectIdentifier, error: any Error)
     case bindingCompleted(destination: ObjectIdentifier)
     case reloadRequested(destination: ObjectIdentifier, mode: EnsembleReloadMode)
-    case reloadIgnored(destination: ObjectIdentifier)
     case bindingCancelled(destination: ObjectIdentifier)
 
     var logLevel: Ensemble.DebugLogLevel {
@@ -112,21 +106,11 @@ enum EnsembleLogEvent {
             "[bind] • completed | destination=\(destination)"
         case .reloadRequested(let destination, let mode):
             "[reload] ↻ requested | destination=\(destination) mode=\(mode.rawValue)"
-        case .reloadIgnored(let destination):
-            "[reload] ⊘ ignored because no source is bound | destination=\(destination)"
         case .bindingCancelled(let destination):
             "[bind] • cancelled | destination=\(destination)"
         }
     }
 
-    var severity: EnsembleLogSeverity {
-        switch self {
-        case .reloadIgnored:
-            .info
-        default:
-            .debug
-        }
-    }
 }
 
 extension Logger {
@@ -137,12 +121,7 @@ extension Logger {
 
         let event = event()
         guard configuredLevel.includes(event.logLevel) else { return }
-        switch event.severity {
-        case .debug:
-            debug("\(event.message, privacy: .public)")
-        case .info:
-            info("\(event.message, privacy: .public)")
-        }
+        debug("\(event.message, privacy: .public)")
 #endif
     }
 }
@@ -154,19 +133,6 @@ private extension Ensemble.DebugLogLevel {
             true
         default:
             false
-        }
-    }
-}
-
-extension ViewDataReloadBehavior {
-    var logMode: EnsembleReloadMode {
-        switch self {
-        case .resubscribe:
-            .resubscribe
-        case .refresh:
-            .refresh
-        case .disabled:
-            .disabled
         }
     }
 }

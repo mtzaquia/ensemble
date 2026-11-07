@@ -22,59 +22,70 @@
 
 @_exported import Observation
 
-/// Declares a lazily connected source on a main-actor class property.
+/// Declares stable presentation state with an automatically rebound source on a main-actor class.
 ///
-/// The annotated property must be a `var` explicitly typed as `ViewData<Value>`. Seed it with a
-/// property initializer, assign it in the model's initializer, or supply `initialValue` here.
-/// Reading the property installs its source once without starting work. `AsyncContent` observes
-/// source-backed data automatically; call `ViewData.observe()` for explicit observation.
-/// In an `@Observable` model, apply `@ObservationIgnored` after this attribute to prevent competing
-/// accessor expansions. The stable `ViewData` observes its own presentation state.
+/// Apply this macro to a get-only instance `var` explicitly typed as `ViewData<Value>`, without a
+/// property initializer. The macro creates the data on first read, evaluates `initial` once, and
+/// schedules activation after the getter returns. The source stays connected until its model
+/// is released, including when the property is read only by a badge or a derived condition.
+/// Retaining the returned `ViewData` separately does not keep its source alive.
+/// In an `@Observable` model, place `@ObservationIgnored` after this attribute.
 ///
-/// Factories receive the owning model at invocation time and do not retain it between calls.
-/// Write `make: { (model: Self) in model.useCase.values() }`; the refresh closure's owner type
-/// is then inferred. Callbacks must be inline closures. Direct instance `self` and `super`
-/// references, including capture lists and nested closures, produce compile-time diagnostics.
-/// This syntax check cannot prove that helpers or returned sequences avoid retaining the owner;
-/// they remain responsible for their own captures and producer cancellation.
-/// Hot sources must establish observation synchronously in `make` or buffer results published
-/// before iteration starts. Hot streams can remain passive and replay cached outcomes without
-/// requesting data. Initial requests belong to the model's explicit loading flow; the refresh
-/// action runs only for an explicit reload or retry.
+/// After activation, changes to observable properties read synchronously by `make` invalidate the
+/// old connection and rebuild the subscription on the main actor after the mutation completes.
+/// Keep mutable source-selection state on the main actor.
+/// Success is retained and the seed is never reapplied. Use ``ViewData/reset()`` before changing
+/// domain identity when retaining the old value would be inappropriate. Reads in the seed,
+/// refresh, adapter, or later sequence iteration do not become factory dependencies.
+///
+/// All callbacks receive the owner. Adapters run synchronously on the main actor with a
+/// connection-scoped sink; obsolete sinks and retries cannot affect a new connection. Callbacks
+/// are skipped after owner release. Sources remain responsible for their own captures and
+/// cooperative cancellation. A hot factory must register or buffer updates before refresh can
+/// publish. Rebinding never invokes refresh; initial requests, reload, and retry are explicit.
+/// Cold sequences start work on activation. Repeated reads do not restart completed sequences.
+/// A callback temporarily retains the owner while it runs, including across an awaited refresh.
+///
+/// Write `(model: Self)` on `initial` or `make` to infer the other callbacks' owner type. Callbacks
+/// must be inline closures. Direct instance `self` and `super` captures are diagnosed; use the
+/// supplied owner parameter. Syntax checks cannot prove that returned sequences avoid retaining it.
 ///
 /// - Parameters:
-///   - make: A prompt factory for a result sequence. Expensive work belongs to its producer.
-///   - refresh: An optional action that requests another result from a hot source. Without one,
-///     reload cancels the current subscription and invokes `make` again. Await the producer's
-///     work in this closure so `reload()` can await its completion.
-///   - initialValue: Optional declaration-site availability used to initialize the property.
-///   - receive: An optional adapter for result elements. Omit it to apply each result directly.
-@attached(accessor, names: named(init), named(get))
+///   - initial: An optional synchronous owner-derived seed, evaluated once on first read.
+///   - make: A prompt factory whose synchronous observable reads select the source.
+///   - refresh: An optional async action that awaits a hot producer's work. Without one, reload
+///     cancels and resubscribes; ongoing streams should provide this action.
+///   - allowsReload: Whether explicit reloads and failure retries are enabled.
+///   - receive: An optional owner-dependent adapter; omit it to apply each result directly.
+@attached(accessor, names: named(get))
 @attached(peer, names: prefixed(_))
 public macro ViewDataSource<Owner: AnyObject, Value, Source: AsyncSequence, SourceError: Error>(
+    initial: (@MainActor (Owner) -> ViewDataAvailability<Value>)? = nil,
     make: @escaping @MainActor (Owner) -> Source,
     refresh: (@MainActor (Owner) async -> Void)? = nil,
-    initialValue: ViewDataAvailability<Value> = .unavailable,
-    receive: (@MainActor (Source.Element, ViewDataSink<Value>) -> Void)? = nil
+    allowsReload: Bool = true,
+    receive: (@MainActor (Owner, Source.Element, ViewDataSink<Value>) -> Void)? = nil
 ) = #externalMacro(module: "EnsembleMacros", type: "ViewDataSourceMacro")
 where Source.Element == Result<Value, SourceError>
 
-/// Declares a lazy source with application-defined element handling.
+/// Declares an automatically rebound source with application-defined update handling.
 ///
-/// This overload accepts streams such as result/reset updates. The adapter runs on the main actor
-/// with a connection-scoped sink; obsolete sinks cannot modify a replacement connection. The same
-/// storage, initialization, ownership, and capture rules as the result-source overload apply.
+/// This overload accepts elements such as result/reset updates. The adapter receives the owner
+/// and a connection-scoped sink. The same initialization, dependency tracking, ownership, and
+/// capture rules as the result-source overload apply.
 ///
 /// - Parameters:
-///   - make: A prompt factory for the update sequence.
-///   - refresh: An optional async action that awaits a hot producer's refresh work.
-///   - initialValue: Declaration-site availability used to initialize the property.
-///   - receive: Translates each update into successful, failed, or reset presentation state.
-@attached(accessor, names: named(init), named(get))
+///   - initial: An optional synchronous owner-derived seed, evaluated once on first read.
+///   - make: A prompt factory whose synchronous observable reads select the source.
+///   - refresh: An optional async action that awaits a hot producer's work.
+///   - allowsReload: Whether explicit reloads and failure retries are enabled.
+///   - receive: Translates an element using the owner and a connection-scoped sink.
+@attached(accessor, names: named(get))
 @attached(peer, names: prefixed(_))
 public macro ViewDataSource<Owner: AnyObject, Value, Source: AsyncSequence>(
+    initial: (@MainActor (Owner) -> ViewDataAvailability<Value>)? = nil,
     make: @escaping @MainActor (Owner) -> Source,
     refresh: (@MainActor (Owner) async -> Void)? = nil,
-    initialValue: ViewDataAvailability<Value> = .unavailable,
-    receive: @escaping @MainActor (Source.Element, ViewDataSink<Value>) -> Void
+    allowsReload: Bool = true,
+    receive: @escaping @MainActor (Owner, Source.Element, ViewDataSink<Value>) -> Void
 ) = #externalMacro(module: "EnsembleMacros", type: "ViewDataSourceMacro")

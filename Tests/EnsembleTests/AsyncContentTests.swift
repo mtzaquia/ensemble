@@ -506,13 +506,13 @@ struct AsyncContentTests {
     @Test("Retry keeps failure content ahead of a placeholder until the next result")
     func retryKeepsFailureAheadOfPlaceholder() async throws {
         var continuations: [AsyncStream<Result<Int, TestError>>.Continuation] = []
-        let data = ViewData<Int>(make: {
+        let dataFixture = SourceFixture<Int, _>(make: {
             let (stream, continuation) = AsyncStream<Result<Int, TestError>>.makeStream()
             continuations.append(continuation)
             return stream
         })
-        let observation = Task { await data.observe() }
-        defer { observation.cancel() }
+        defer { withExtendedLifetime(dataFixture) {} }
+        let data = dataFixture.data
         #expect(await eventually { continuations.count == 1 })
 
         continuations[0].yield(.failure(.expected))

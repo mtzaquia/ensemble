@@ -51,24 +51,6 @@ struct LoggerTests {
         #expect(
             EnsembleLogEvent.bindingCompleted(destination: destination).logLevel == .trace
         )
-        #expect(
-            EnsembleLogEvent.reloadIgnored(destination: destination).logLevel == .normal
-        )
-    }
-
-    @Test("Ignored reloads use info severity")
-    func eventSeverities() {
-        let destination = ObjectIdentifier(ViewData<Int>())
-
-        #expect(
-            EnsembleLogEvent.reloadRequested(
-                destination: destination,
-                mode: .refresh
-            ).severity == .debug
-        )
-        #expect(
-            EnsembleLogEvent.reloadIgnored(destination: destination).severity == .info
-        )
     }
 
     @Test("Log messages include lifecycle context without values")
@@ -94,11 +76,6 @@ struct LoggerTests {
         #expect(resetMessage.contains("[bind] • received reset"))
         #expect(resetMessage.contains("destination=\(destination)"))
 
-        let ignoredReloadMessage =
-            EnsembleLogEvent.reloadIgnored(destination: destination).message
-        #expect(
-            ignoredReloadMessage ==
-                "[reload] ⊘ ignored because no source is bound | destination=\(destination)"
-        )
     }
+
 }

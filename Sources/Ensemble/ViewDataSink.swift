@@ -22,8 +22,8 @@
 
 /// Applies a source-specific binding update to presentation state.
 ///
-/// Ensemble supplies a sink to a custom source initializer or `replaceSource` handler.
-/// Its actions are ignored after that binding is replaced or cancelled.
+/// Ensemble supplies a sink to a `@ViewDataSource` adapter.
+/// Its actions are ignored after source inputs change or the connection is cancelled.
 @MainActor
 public struct ViewDataSink<Value> {
     enum Action {

@@ -92,8 +92,8 @@ extension ViewDataAvailability: Sendable where Value: Sendable {}
 ///
 /// `ViewData` retains its latest successful value while loading or failed. A view can present that
 /// retained value without requiring the source to emit it again.
-/// Source-aware initialization lets `AsyncContent` manage observation automatically. Replacing
-/// the source preserves the same presentation state and its latest successful value.
+/// `@ViewDataSource` declares a source that activates on first access and lives with its model.
+/// Observable factory inputs rebind that source while preserving this state and its latest value.
 ///
 /// ``reset()`` clears presentation state without cancelling work. A later accepted update from a
 /// load or binding can supply another value.
@@ -232,7 +232,7 @@ public final class ViewData<Value> {
     ///
     /// An available value is immediately exposed through ``latestValue`` with a successful
     /// ``phase``. This includes empty collections and successful `nil` results for optional values.
-    /// Binding a source later preserves the value while the source is loading. Unavailable input
+    /// A later load preserves the value while loading. Unavailable input
     /// creates empty presentation state, just like ``init()``.
     ///
     /// - Parameter initialValue: The successful value, if any, to expose from creation.
@@ -291,8 +291,8 @@ public final class ViewData<Value> {
     /// Removes the latest value and returns the presentation to ``Phase/empty``.
     ///
     /// Resetting presentation state does not cancel an active load or binding. A later accepted
-    /// update can replace the empty state. Cancel the tasks awaiting ``observe()`` to end explicit
-    /// observation, and cancel the task awaiting ``load(_:)`` to stop a one-shot load.
+    /// update can replace the empty state. The source remains connected for its model's lifetime.
+    /// Cancel the task awaiting ``load(_:)`` to stop a one-shot load.
     public func reset() {
         currentLoadingToken = nil
         updatePresentation {

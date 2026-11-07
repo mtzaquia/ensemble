@@ -21,17 +21,15 @@
 //
 
 extension Ensemble {
-    /// Reloads independent presentation sources concurrently and waits for every request action.
+    /// Calls each source's reload concurrently and waits for every request action.
     ///
-    /// Sources may hold different value types. Each managed source is observed for the duration
-    /// of the batch, so a startup request does not depend on `AsyncContent` activation. A newly
-    /// connected cold source uses that first subscription instead of starting a second request.
-    /// Existing consumers keep their own observation leases when the batch finishes.
+    /// Sources may hold different value types. Each call has the same behavior as
+    /// ``ViewData/reload()``. Source connections belong to their models and keep delivering updates
+    /// after the requests finish.
     ///
     /// Each source handles its own results, failures, and resets. A failure does not cancel sibling
     /// requests or throw from the batch. Completion means every request action finished; streamed
-    /// outcomes may be delivered separately. Consumers that need ongoing or queued delivery after
-    /// the actions finish must keep their own observation, such as `AsyncContent` or `observe()`.
+    /// outcomes may be delivered separately while the owning model remains alive.
     /// Caller cancellation propagates to outstanding work.
     /// Producers remain responsible for cooperative cancellation and update delivery.
     ///
@@ -46,48 +44,13 @@ extension Ensemble {
     @MainActor
     public static func reload<each Value>(_ sources: repeat ViewData<each Value>) async {
         guard !Task.isCancelled else { return }
-        var identities: Set<ObjectIdentifier> = []
-        var operations: [ViewDataReloadOperation] = []
-        func prepare<Chunk>(_ source: ViewData<Chunk>) {
-            guard identities.insert(ObjectIdentifier(source)).inserted,
-                  let operation = source.prepareBatchReload() else { return }
-            operations.append(operation)
+        await withTaskGroup(of: Void.self) { group in
+            var identities: Set<ObjectIdentifier> = []
+            func enqueue<Chunk>(_ source: ViewData<Chunk>) {
+                guard identities.insert(ObjectIdentifier(source)).inserted else { return }
+                group.addTask { await source.reload() }
+            }
+            repeat enqueue(each sources)
         }
-        repeat prepare(each sources)
-        defer {
-            for operation in operations { operation.finish() }
-        }
-        await runReloadOperations(operations)
-    }
-}
-
-@MainActor
-private func runReloadOperations(_ operations: [ViewDataReloadOperation]) async {
-    await withTaskGroup(of: Void.self) { group in
-        for operation in operations {
-            group.addTask(operation: operation.run)
-        }
-    }
-}
-
-// Only request actions are erased here; source values remain in their typed ViewData bindings.
-struct ViewDataReloadOperation: Sendable {
-    let run: @MainActor @Sendable () async -> Void
-    let finish: @MainActor @Sendable () -> Void
-}
-
-extension ViewData {
-    func prepareBatchReload() -> ViewDataReloadOperation? {
-        guard let binding, let request = binding.acquireReloadObservation(self) else { return nil }
-        return ViewDataReloadOperation(
-            run: {
-                if request.reuseConnection {
-                    await self.binding?.waitForConnection(request.connection)
-                } else {
-                    await self.reload()
-                }
-            },
-            finish: { self.binding?.releaseReloadObservation() }
-        )
     }
 }

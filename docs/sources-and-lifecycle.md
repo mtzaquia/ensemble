@@ -1,55 +1,69 @@
 # Sources and lifecycle
 
-Each `ViewData` owns one source binding. That binding holds the factory, reload behavior, active
-subscription, and retry action. Consumers acquire observation leases; the last lease ending stops
-the subscription while preserving successful presentation state and source configuration.
+A `@ViewDataSource` declaration owns stable presentation state and a source connection for its
+model's lifetime. First access activates it. Views, badges, and derived conditions read the same
+data without subscription tasks, observation modifiers, or consumer leases.
 
-## Connect and observe
-
-Use a source-aware initializer or the optional `@ViewDataSource` property macro:
+## Activate on first access
 
 ```swift
-let entries = ViewData(
-  cachedAvailability,
-  make: useCase.values,
-  refresh: useCase.reload
+@ViewDataSource(
+  initial: { (model: Self) in model.useCase.cachedAvailability },
+  make: { model in model.useCase.values() },
+  refresh: { model in await model.useCase.reload() }
 )
+@ObservationIgnored
+var entries: ViewData<[Entry]>
 ```
 
-The factory stays dormant during initialization. `AsyncContent(entries)` observes automatically.
-For work outside rendered content, explicitly observe within a task:
+Constructing the model starts no work. The first property access evaluates the seed synchronously
+and schedules source activation after the getter returns, outside view-body evaluation. The factory
+must return promptly; expensive work belongs to its producer. An immediate `reload()` coordinates
+with that activation. Every later read returns the same data and shares the same connection.
 
-```swift
-.task {
-  await model.entries.observe()
-}
-```
+A badge can read `model.entries.latestValue` directly. A condition derived from that value activates
+the source even when the condition prevents `AsyncContent` from being constructed. `AsyncContent`
+controls rendering, loading policy, and failure policy; it has no source-lifecycle responsibilities.
 
-`observe()` waits until cancellation, even after a sequence completes, so a later reload can create
-a fresh subscription. Multiple observers share one connection. Cancel each task to release its lease;
-cancelling one does not interrupt the others. Plain data without a source returns immediately.
+## Model lifetime and reset
 
-Automatic leases follow SwiftUI state lifetime rather than strict visibility. Offscreen views whose
-state SwiftUI retains can continue observing. Releasing or rebinding the consumer's lifecycle storage
-ends its lease.
+After activation, hiding a section, navigating away, or finishing a reload does not disconnect its
+source while the model is retained. Choose model scope deliberately: a retained tab model or an
+application-wide model keeps its accessed sources running. Entering the background does not release
+that model. Producer-specific suspension and background execution remain application concerns.
+
+Releasing the model cancels its subscription and retry work and invalidates pending factory-input
+callbacks. This also happens when another object retains its `ViewData`, sink, or retry action.
+The retained data keeps its presentation, but source reload becomes inert. Models released before
+scheduled activation runs start no source work.
+
+Callbacks receive a weakly held owner and temporarily retain it while running, including an awaited
+refresh. A task invoking an async model method can also keep that model alive until it returns.
+Factories and returned sequences must avoid retaining their model for an endless subscription.
+Cancellation is cooperative with the producer.
+
+`reset()` clears presentation while leaving the model-owned source connected. Later updates may
+replace the empty state. Successful empty collections and optional `nil` count as available values.
 
 ## Reload hot and cold sources
 
-With no refresh action, a reload cancels the previous subscription and invokes the factory again.
-Use a cold request sequence that creates independent work for each subscription.
+Without a refresh action, activation starts the cold sequence. The first explicit reload joins a
+pending initial load that has not yet produced an update. Later reloads cancel the previous
+subscription, invoke the factory again, and await sequence completion. A completed initial sequence
+is ready for a new request; repeated property reads alone never restart it. Cold sources that fetch
+on activation need no extra startup reload merely to obtain their first value.
 
-With a refresh action, reload keeps an active subscription and awaits its producer's action. If the previous
-sequence completed, Ensemble reconnects before calling the action. Hot factories should register
-observation synchronously or buffer updates so an immediate refresh cannot lose its result.
+With a refresh action, activation only subscribes. Reload keeps that subscription and awaits the
+producer's action. If the sequence has completed, Ensemble reconnects before calling the action.
+Hot factories must register their observation synchronously or buffer updates so an immediate
+refresh cannot lose its result. Connections remain alive after the action returns, so queued and
+ongoing updates continue to reach the data while its model lives. Action completion does not imply
+that every streamed outcome has already been processed.
 
-Connecting itself never calls the refresh action. Hot sources may observe repository or use-case
-outcomes passively and replay cached snapshots. The model requests loading explicitly and chooses
-the data layer's caching policy. Ensemble cannot impose immediate emission on an arbitrary source.
-A synchronous initial value guarantees first-paint content independently of the stream.
-
-Successful empty collections and optional `nil` count as available. An idle hot source is not marked
-loading unless an explicit refresh is requested. Cold sources begin loading on connection.
-Explicit reload marks the data loading and preserves its latest successful value.
+Connecting or rebinding never invokes a hot source's refresh action. Initial requests, caching,
+and replay policy belong to the application or data layer. The synchronous seed guarantees
+first-paint content independently of stream timing. Idle hot sources are not marked loading until
+an explicit refresh; cold sources begin loading on activation. Reload preserves successful content.
 
 ## Reload several sources together
 
@@ -57,38 +71,27 @@ Explicit reload marks the data loading and preserves its latest successful value
 await Ensemble.reload(model.profile, model.activity, model.notifications)
 ```
 
-The sources can hold different value types. The batch subscribes to every managed, reload-enabled
-source before dispatching requests concurrently. It holds temporary observation leases until all
-actions finish, then releases only those leases. Existing consumers keep observing. A consumer
-that needs queued or ongoing hot-stream updates after action completion must keep an observation
-lease, such as `AsyncContent` or a task awaiting `observe()`. Batch completion alone does not
-establish that each stream outcome has been consumed. A newly connected cold source uses that
-first subscription; an already observed cold source resubscribes.
+The sources can hold different value types. This convenience calls each source's `reload()`
+concurrently through a task group and awaits all actions, with the same behavior as individual
+calls. Each source applies its own results, failures, and resets. A failure does not cancel its
+siblings or throw from the batch; retry remains local. Completion means the actions finished,
+not that every source succeeded or every stream outcome has been processed.
 
-Each source applies its own results, failures, and resets. Failure in one source does not cancel
-siblings or throw from the batch. A successful section can update while another fails, and failure
-retry remains local to that source. The return value is `Void`: completion means all actions ended,
-not that all sources succeeded. Outcomes can be processed asynchronously through the streams, so
-the batch does not infer an aggregate result from presentation phases.
-
-Cancellation propagates to outstanding request actions and cold subscriptions, then releases the
-batch's leases. Producers remain responsible for cooperative cancellation. Plain data, disabled
-reloads, and an empty or already-cancelled batch do nothing. Duplicate instances reload once.
+Cancellation propagates to outstanding actions and cold requests. It does not end the owning
+models' lifetimes. Plain data, reload-disabled sources, an empty batch, and already-cancelled calls
+perform no reload work. Accessing a reload-disabled property still activates its source normally.
+Duplicate instances in one batch reload once.
 
 ### Overlapping requests
 
-Batch and direct reload calls do not coalesce across invocations. Hot sources may run their refresh
-action more than once; their data layer decides how overlapping work is handled. A later cold
-reload cancels and replaces the earlier subscription. A batch awaiting that earlier cold request
-can finish while the newer direct request continues.
-
-Each active direct request holds its own lease, so another batch or consumer ending does not
-disconnect it. A direct `data.reload()` called before activation remains a no-op; the batch establishes
-observation itself. Avoid launching both for the same source unless both requests are intended.
+Separate reload calls do not coalesce after the pending initial cold load has been joined.
+Hot sources may run their refresh action more than once; their producer decides how overlapping
+work is handled. A later cold reload cancels and replaces the earlier request. Awaiting that earlier
+request can finish while the newer request continues. Finishing one request does not stop another.
 
 ## Adapt source-specific updates
 
-Use the macro's or initializer's optional `receive` adapter to translate other update types without erasing values:
+Use the macro's `receive` adapter to translate application-defined update types:
 
 ```swift
 enum EntriesUpdate {
@@ -96,55 +99,57 @@ enum EntriesUpdate {
   case invalidate
 }
 
-let entries = ViewData<[Entry]>(
-  cachedAvailability,
-  make: useCase.updates,
-  reload: .refresh(useCase.reload)
-) { update, sink in
-  switch update {
-  case .result(let result):
-    sink.receive(result)
-  case .invalidate:
-    sink.reset()
+@ViewDataSource(
+  make: { (model: Self) in model.useCase.updates() },
+  refresh: { model in await model.useCase.reload() },
+  receive: { _, update, sink in
+    switch update {
+    case .result(let result): sink.receive(result)
+    case .invalidate: sink.reset()
+    }
   }
-}
+)
+@ObservationIgnored
+var entries: ViewData<[Entry]>
 ```
 
 The handler runs on the main actor after the binding accepts the element. Its `ViewDataSink` is scoped
 to that connection: retaining it does not let obsolete work update a replacement connection. Reset
-clears presentation without stopping observation. A later source result can recover it.
+clears presentation without stopping the source. A later source result can recover it.
 
-With the `refresh` spelling, custom adapters use the same async refresh actions as result sources.
-The lower-level `reload` initializer parameter also accepts `ViewDataReloadBehavior`: `.resubscribe`, `.refresh(action)`, or `.disabled`.
-Disabled sources expose no programmatic reload or failure retry action. Use the same `receive`
-overload on `replaceSource` when changing an adapted producer.
+Adapters receive the owner, element, and sink. Use `_` for an unused owner. Sink changes apply
+synchronously, and reads made by the adapter do not become source-selection dependencies.
+Set `allowsReload: false` on the macro to suppress programmatic reload and failure retry while
+keeping activation and automatic rebinding.
 
-## Replace a source
+## Track source-selection inputs
 
-```swift
-entries.replaceSource(make: replacement.values, refresh: replacement.reload)
-```
+Changing observable properties read synchronously by the factory invalidates old results, sinks,
+and retries immediately. Ensemble then rebuilds the subscription on the main actor using the
+latest inputs. Several synchronous changes coalesce. The same data and successful content survive;
+hot sources reconnect without invoking refresh.
 
-Replacement cancels the old subscription, invalidates its sink and retry action, and reconnects active
-observers immediately. Inactive data retains the new factory until observed. Replacement does not
-invoke the new refresh action or accept a new seed. Hot observation can remain passive;
-explicit `await reload()` requests a refresh.
+Dependency tracking is renewed on every connection, including conditional branches. Completed
+sequences still track input changes while their model lives. Unread declarations stay dormant;
+a first access selects the current inputs. Owner teardown disarms pending callbacks and prevents
+further connections.
 
-The successful value stays in the same `ViewData` and is visible to every consumer. Reserve
-`reset()` for explicit invalidation, such as changing accounts. Replacing the `ViewData` instance
-itself creates fresh presentation state; `AsyncContent` does not copy content between instances.
+Use `reset()` before changing an account or another domain identity if the old value is no longer
+appropriate. Seeds run once and are never reapplied on rebinding. See
+[Source-backed data](source-backed-data.md#rebind-through-observable-inputs).
 
 ## Completion, errors, and cancellation
 
-A failure element enters failure without ending observation, so a later success can recover it. A
-thrown iteration error enters failure and completes the subscription. Producer cancellation is not
-presented as a failure. Empty completion or cancellation settles loading to its preceding failure,
-retained success, or empty state. A previously emitted result keeps its phase.
+A failure element enters failure without ending the subscription, so a later success can recover
+it. A thrown iteration error enters failure and completes the subscription. Producer cancellation
+is not presented as a failure. Empty completion or cancellation settles loading to its preceding
+failure, retained success, or empty state. A previously emitted result keeps its phase.
 
-Reload can reconnect a completed subscription while consumers retain their observation leases.
-Cancelling the last lease removes its retry action and settles only that connection's loading
-transition. Connection revisions reject obsolete producer updates and retained retries or sinks.
-Cancellation is cooperative with upstream work; producers must handle their own cleanup.
+Reload can reconnect a completed sequence. Cancelling an awaited cold reload stops that request
+and rejects its retained sinks; factory-input tracking remains active for future input changes.
+Cancelling a hot refresh leaves its model-owned subscription intact. Owner teardown removes retry
+and settles only that connection's loading transition. Connection revisions reject obsolete updates
+without settling a newer one-shot load or replacement request.
 
 ## Load one value
 
@@ -159,7 +164,7 @@ the latest success; an error enters failure while preserving successful data. Lo
 apply in arrival order. Loading tokens ensure cancellation of an older operation cannot clear a
 later operation's loading state or replace a newer result. A load does not install a retry action.
 
-`reset()` changes presentation only. Cancel explicit observation tasks to stop their subscriptions,
-and cancel the task awaiting `load` to stop its operation.
+`reset()` changes presentation only. Releasing the owning model stops its sources. Cancel the task
+awaiting `load` to stop that one-shot operation.
 
 Next: [Source-backed data and macros](source-backed-data.md) · [Diagnostics](diagnostics.md)

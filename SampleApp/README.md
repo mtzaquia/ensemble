@@ -4,8 +4,9 @@ The sample app is a UI/platform showcase for `ViewData` and `AsyncContent`. Each
 keeps its state local, uses deterministic fixtures, and places the explanation beside the behavior
 it demonstrates.
 
-All stream-backed models declare their sources at initialization. `AsyncContent` manages their
-observation, and the models reload directly through their data properties. One-shot examples use
+All stream-backed models declare their sources with `@ViewDataSource`. First property access
+activates a connection for the model’s lifetime. `AsyncContent` renders its state, and models reload
+directly through their data properties. One-shot examples use
 `await entries.load(...)`; no separate context or binding-start method is required. Reload is async:
 Screen replacement's pull-to-refresh awaits the new cold request, and custom async refresh actions
 can await producer work directly.
@@ -22,11 +23,12 @@ UI_TESTING --scenario=animated-reordering
 The `UI_TESTING` flag disables platform animations for deterministic final-state assertions. Omit it
 for manual inspection of transitions.
 
-## Source lifecycle (v3 prototype)
+## Source lifecycle
 
 Launch `UI_TESTING --scenario=source-lifecycle` or select **Source lifecycle** from the catalog.
-The model uses source-aware `ViewData` initialization. A separate model demonstrates
-`@ViewDataSource` without a context, lifecycle method, model-level macro, or projected value.
+Both models declare their sources with `@ViewDataSource`. The selected source is an observable
+model input; changing it automatically rebinds the subscription. No context, lifecycle method,
+model-level macro, projected value, or replacement call is needed.
 
 1. The first source exposes cached rows immediately.
 2. Choose **Swap source**. The model keeps its successful value in the same instance, and the
@@ -34,21 +36,25 @@ The model uses source-aware `ViewData` initialization. A separate model demonstr
    Choose **Reload** to enter loading with a Retained badge instead of placeholders.
 3. Choose **Fail response** to retain those rows through failure, then **Reload** and
    **Deliver response** to recover with the new source's rows.
-4. Choose **Show macro source** and scroll its rows into view. Its connection count changes from
-   zero only when rendered.
-5. Hide that consumer to release its lease; SwiftUI may retain state for offscreen list rows, so
-   visibility alone is not the source-lifetime contract.
+4. Choose **Read badge**. The unseeded badge reads zero and activates the source before any
+   `AsyncContent` exists. Its connection count becomes one.
+5. Choose **Show macro source**. The data gate waits for a response. **Deliver macro response**
+   opens it and updates the badge to three. Reading the gate alone also activates the source.
+6. Hide the consumer. The connection count stays one because the model still lives.
+7. Choose **Release macro model**. The previous source’s active connection count reaches zero,
+   and the replacement model stays dormant until its first property read.
 
 | Promise | Evidence | Primary proof |
 | --- | --- | --- |
 | Seeds are synchronous; factories are lazy | Cached rows before connection; macro count starts at zero | Package tests and sample UI test |
-| An empty renderer still activates its source | Hidden source delivers without an ancestor task | Hosted SwiftUI test |
-| Source replacement retains real model data | Old rows remain available in the model throughout the request | Package, hosted List, and sample UI tests |
-| Leases share work and cancel after their last consumer | One connection for two observers, no binding after cancellation | Package tests |
-| Macro-generated owners are weak | Model deallocates while data is independently observed | Package test |
+| A badge or closed data gate activates its source | Badge updates before content exists; the gate later opens | Package, hosted SwiftUI, and sample UI tests |
+| Observed source changes retain real model data | Old rows remain available in the model throughout the request | Package, hosted List, and sample UI tests |
+| Hidden consumers keep the model-owned source | Hide and restore content without creating another connection | Package, hosted SwiftUI, and sample UI tests |
+| Owner release cancels even when data is retained | Previous active connections reach zero after releasing the model | Package and sample UI tests |
 
-The source-aware initializer is the simplest path for observable models. The prototype's property
-macro requires `@ObservationIgnored` after its annotation when used inside an `@Observable` class.
+The macro owns initialization and binding. Supply a seed through `initial: { owner in ... }`;
+it runs once before the first rendering. In an `@Observable` class, put `@ObservationIgnored`
+after the macro annotation.
 See [Source-backed data](../docs/source-backed-data.md) for policies, lifecycle, and migration.
 
 ## Animated reordering
@@ -89,16 +95,16 @@ pull-to-refresh, and the **Reload every section** button.
 3. Retry the tip alone. Its request recovers without changing account or activity.
 4. Choose **Reload every section** or pull to refresh. The next batch recovers the account too.
 
-The batch owns temporary observation while its actions run. Each `AsyncContent` keeps its own
-lease, state, and retry behavior afterward. Completion means all requests finished; it does not
-combine the sections into a single success or failure.
+The helper calls each `data.reload()` concurrently. Connections belong to the models and keep
+delivering updates after the actions return. Each section keeps its own state and retry behavior. Completion means all requests finished; it does not combine the sections into a single
+success or failure.
 
 | Promise | Evidence | Primary proof |
 | --- | --- | --- |
 | Different value types reload together | Entry arrays and a text tip share one batch call | Package tests and sample UI test |
 | Partial failure leaves siblings running | Activity succeeds while account and tip fail | Package tests and sample UI test |
 | Per-section retry remains independent | Tip recovery leaves cached account rows visible | Package tests and sample UI test |
-| Cancellation releases only the batch's leases | Existing consumer continues receiving updates | Package tests |
+| Cancellation stops requests while hot updates continue | Model-owned connection still accepts later updates | Package tests |
 
 ## Cached refresh
 

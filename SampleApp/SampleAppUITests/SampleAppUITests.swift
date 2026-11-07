@@ -31,7 +31,7 @@ nonisolated final class SampleAppUITests: XCTestCase {
     }
 
     @MainActor
-    func testSourceReplacementRetainsRowsAndMacroStartsWhenShown() {
+    func testObservedSourceChangeAndModelOwnedActivation() {
         launch(.sourceLifecycle)
         XCTAssertTrue(element("sample.source-lifecycle.screen").waitForExistence(timeout: 3))
         XCTAssertTrue(element(A11y.entry(10)).waitForExistence(timeout: 2))
@@ -58,11 +58,26 @@ nonisolated final class SampleAppUITests: XCTestCase {
         let showMacro = app.buttons["sample.source-lifecycle.show-macro"]
         scrollUntilHittable(showMacro, direction: .up)
         XCTAssertTrue(waitForLabelContaining("0", on: element("sample.source-lifecycle.connections")))
-        showMacro.tap()
-        // List may defer constructing the source consumer until its rows enter the viewport.
-        scrollUntilHittable(app.buttons["sample.source-lifecycle.deliver-macro"], direction: .up)
+        let readBadge = app.buttons["sample.source-lifecycle.read-badge"]
+        scrollUntilHittable(readBadge, direction: .down)
+        readBadge.tap()
+        XCTAssertTrue(waitForLabelContaining("0", on: element("sample.source-lifecycle.badge")))
         let connections = element("sample.source-lifecycle.connections")
-        XCTAssertTrue(waitForLabelContaining("1", on: connections), "Counter: \(connections.label)")
+        XCTAssertTrue(waitForLabelContaining("1", on: connections))
+        scrollUntilHittable(showMacro, direction: .up)
+        showMacro.tap()
+        XCTAssertTrue(element("sample.source-lifecycle.gate").waitForExistence(timeout: 3))
+        let deliverMacro = app.buttons["sample.source-lifecycle.deliver-macro"]
+        scrollUntilHittable(deliverMacro, direction: .up)
+        deliverMacro.tap()
+        XCTAssertTrue(waitForLabelContaining("3", on: element("sample.source-lifecycle.badge")))
+        scrollUntilHittable(showMacro, direction: .down)
+        showMacro.tap()
+        XCTAssertTrue(waitForLabelContaining("1", on: connections))
+        let releaseModel = app.buttons["sample.source-lifecycle.release-model"]
+        scrollUntilHittable(releaseModel, direction: .up)
+        releaseModel.tap()
+        XCTAssertTrue(waitForLabelContaining("0", on: element("sample.source-lifecycle.previous-connections")))
     }
 
     @MainActor

@@ -30,10 +30,10 @@ struct ViewDataReceiveTests {
     func macroUpdates() async {
         let source = AdaptedSource()
         let model = AdaptedModel(source: source)
+        defer { withExtendedLifetime(model) {} }
         #expect(model.data.latestValue == .available(7))
         #expect(source.connections == 0)
-        let observation = Task { await model.data.observe() }
-        defer { observation.cancel() }
+        _ = model.data
         #expect(await eventually { source.connections == 1 })
         #expect(source.requests.isEmpty)
         source.emit(.result(.failure(.offline)))
@@ -45,46 +45,40 @@ struct ViewDataReceiveTests {
         #expect(await eventually { model.data.latestValue == .available(42) })
     }
 
-    @Test("Owner initializers adapt updates without retaining the owning model")
+    @Test("Macro adapters skip updates after the owning model is released")
     func ownerInitializer() async {
         let source = AdaptedSource()
         var model: AdaptedModel? = AdaptedModel(source: source)
         weak var weakModel: AdaptedModel?
         weakModel = model
-        let data = ViewData<Int>(
-            .available(7), owner: model!,
-            make: { $0.source.values() },
-            refresh: { await $0.source.reload() },
-            receive: apply
-        )
-        let observation = Task { await data.observe() }
-        defer { observation.cancel() }
+        let data = model!.data
         #expect(await eventually { source.connections == 1 })
         model = nil
         #expect(weakModel == nil)
         source.emit(.reset)
-        #expect(await eventually { data.latestValue == .unavailable })
         source.emit(.result(.success(42)))
-        #expect(await eventually { data.latestValue == .available(42) })
+        source.continuations[0].finish()
+        #expect(await eventually { data.binding?.isRunning == false })
+        #expect(data.latestValue == .available(7))
     }
 
-    @Test("Initializer adapters become obsolete when the source is replaced")
-    func initializerReplacement() async throws {
+    @Test("Adapters become obsolete when factory inputs change")
+    func adapterRebinding() async throws {
         let source = AdaptedSource()
         var oldSink: ViewDataSink<Int>?
-        let data = ViewData<Int>(.available(7), make: source.values, refresh: source.reload) { update, sink in
+        let dataFixture = SourceFixture<Int, _>(.available(7), make: source.values, refresh: source.reload) { _, update, sink in
             oldSink = sink
             apply(update, sink)
         }
-        let observation = Task { await data.observe() }
-        defer { observation.cancel() }
+        defer { withExtendedLifetime(dataFixture) {} }
+        let data = dataFixture.data
         #expect(await eventually { source.connections == 1 })
         source.emit(.result(.success(10)))
         #expect(await eventually { data.latestValue == .available(10) })
         let obsolete = try #require(oldSink)
         let replacement = AdaptedSource()
-        data.replaceSource(make: replacement.values, refresh: replacement.reload, receive: apply)
-        #expect(replacement.connections == 1)
+        dataFixture.factory = replacement.values
+        try #require(await eventually { replacement.connections == 1 })
         obsolete.reset()
         obsolete.receive(Result<Int, AdaptedFailure>.success(999))
         #expect(data.latestValue == .available(10))
@@ -97,11 +91,11 @@ struct ViewDataReceiveTests {
     @Test("Result adapters are optional and can override the default mapping")
     func resultAdapter() async {
         let (stream, producer) = AsyncStream<Result<Int, AdaptedFailure>>.makeStream()
-        let data = ViewData<Int>(make: { stream }, receive: { result, sink in
+        let dataFixture = SourceFixture<Int, _>(make: { stream }, receive: { _, result, sink in
             sink.receive(result.map { $0 * 2 })
         })
-        let observation = Task { await data.observe() }
-        defer { observation.cancel() }
+        defer { withExtendedLifetime(dataFixture) {} }
+        let data = dataFixture.data
         producer.yield(.success(21))
         #expect(await eventually { data.latestValue == .available(42) })
     }
@@ -110,8 +104,8 @@ struct ViewDataReceiveTests {
     func asyncMacroRefresh() async {
         let source = AdaptedSource()
         let model = AdaptedModel(source: source)
-        let observation = Task { await model.data.observe() }
-        defer { observation.cancel() }
+        defer { withExtendedLifetime(model) {} }
+        _ = model.data
         #expect(await eventually { source.connections == 1 })
         var returned = false
         let reload = Task {
@@ -131,9 +125,9 @@ struct ViewDataReceiveTests {
     @Test("Cancelling an awaited hot reload reaches the producer and settles loading")
     func cancelledHotRefresh() async {
         let source = AdaptedSource()
-        let data = ViewData<Int>(.available(7), make: source.values, refresh: source.reload, receive: apply)
-        let observation = Task { await data.observe() }
-        defer { observation.cancel() }
+        let dataFixture = SourceFixture<Int, _>(.available(7), make: source.values, refresh: source.reload, receive: { _, update, sink in apply(update, sink) })
+        defer { withExtendedLifetime(dataFixture) {} }
+        let data = dataFixture.data
         #expect(await eventually { source.connections == 1 })
         let reload = Task { await data.reload() }
         #expect(await eventually { source.requests.count == 1 })
@@ -147,14 +141,16 @@ struct ViewDataReceiveTests {
     @Test("Cold reload waits for completion and cancellation stops that request")
     func coldRequestLifetime() async {
         var producers: [AsyncStream<Result<Int, AdaptedFailure>>.Continuation] = []
-        let data = ViewData<Int>(make: {
+        let dataFixture = SourceFixture<Int, _>(make: {
             let (stream, producer) = AsyncStream<Result<Int, AdaptedFailure>>.makeStream()
             producers.append(producer)
             return stream
         })
-        let observation = Task { await data.observe() }
-        defer { observation.cancel() }
+        defer { withExtendedLifetime(dataFixture) {} }
+        let data = dataFixture.data
         #expect(await eventually { producers.count == 1 })
+        producers[0].yield(.success(7))
+        #expect(await eventually { data.latestValue == .available(7) })
         var returned = false
         let reload = Task { await data.reload(); returned = true }
         #expect(await eventually { producers.count == 2 })
@@ -201,9 +197,10 @@ private final class AdaptedModel {
     let source: AdaptedSource
 
     @ViewDataSource(
+        initial: { _ in .available(7) },
         make: { (model: Self) in model.source.values() },
         refresh: { model in await model.source.reload() },
-        receive: { update, sink in
+        receive: { _, update, sink in
             switch update {
             case .result(let result): sink.receive(result)
             case .reset: sink.reset()
@@ -215,7 +212,6 @@ private final class AdaptedModel {
 
     init(source: AdaptedSource) {
         self.source = source
-        data = ViewData(.available(7))
     }
 }
 

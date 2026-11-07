@@ -28,26 +28,42 @@ import Testing
 #if canImport(AppKit)
 import AppKit
 
-@Suite("Hosted source observation", .serialized)
+@Suite("Hosted model-owned sources", .serialized)
 struct SourceHostingTests {
-    @Test("A hidden AsyncContent starts its source without a task on an ancestor")
+    @Test("A conditional gate activates before AsyncContent exists")
     func hiddenSourceStarts() async throws {
         let useCase = HostedSource()
         useCase.valueOnSubscription = 42
-        let data = ViewData<Int>(make: useCase.values, refresh: useCase.reload)
-        let host = NSHostingView(rootView: AsyncContent(data) { value, _ in Text("\(value)") })
+        let model = HostedModel(useCase: useCase, initial: .unavailable)
+        defer { withExtendedLifetime(model) {} }
+        let probe = HandoffProbe()
+        let host = NSHostingView(rootView: GatedSourceContent(model: model, probe: probe))
         host.frame = NSRect(x: 0, y: 0, width: 300, height: 300)
-        for _ in 0..<100 {
-            host.layoutSubtreeIfNeeded()
-            if data.latestValue == .available(42) { break }
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await render(host) { probe.lastSample == "42-latest" }
         #expect(useCase.connections == 1)
-        #expect(data.latestValue == .available(42))
+        #expect(model.data.latestValue == .available(42))
         #expect(useCase.refreshes == 0)
     }
 
-    @Test("A List retains real model data while its source is replaced")
+    @Test("Removing and restoring content keeps one model-owned connection")
+    func hiddenConsumerKeepsSource() async throws {
+        let useCase = HostedSource()
+        let model = HostedModel(useCase: useCase)
+        let probe = HandoffProbe()
+        let host = NSHostingView(rootView: GatedSourceContent(model: model, probe: probe))
+        host.frame = NSRect(x: 0, y: 0, width: 300, height: 300)
+        try await render(host) { probe.lastSample == "41-latest" && useCase.connections == 1 }
+        model.showsContent = false
+        host.layoutSubtreeIfNeeded()
+        useCase.continuation?.yield(.success(42))
+        try await render(host) { model.data.latestValue == .available(42) }
+        model.showsContent = true
+        try await render(host) { probe.lastSample == "42-latest" }
+        #expect(useCase.connections == 1)
+        #expect(useCase.refreshes == 0)
+    }
+
+    @Test("A List retains real model data while observed inputs rebind its source")
     func listHandoff() async throws {
         let useCase = HostedSource()
         let model = HostedModel(useCase: useCase)
@@ -63,7 +79,7 @@ struct SourceHostingTests {
         let previous = model.data
         let replacement = HostedSource()
         replacement.deliversOnRefresh = false
-        model.data.replaceSource(make: replacement.values, refresh: replacement.reload)
+        model.useCase = replacement
         try await render(host) { replacement.connections == 1 }
         #expect(model.data === previous)
         #expect(replacement.refreshes == 0)
@@ -113,23 +129,43 @@ private enum HostedError: Error { case failed }
 
 @Observable
 private final class HostedModel {
-    let useCase: HostedSource
+    var useCase: HostedSource
+    let initial: ViewDataAvailability<Int>
+    var showsContent = true
+    var hasContent: Bool {
+        if case .available = data.latestValue { true } else { false }
+    }
 
     @ViewDataSource(
+        initial: { (model: Self) in model.initial },
         make: { (model: Self) in model.useCase.values() },
         refresh: { model in model.useCase.reload() }
     )
     @ObservationIgnored
     var data: ViewData<Int>
-    init(useCase: HostedSource) {
+    init(useCase: HostedSource, initial: ViewDataAvailability<Int> = .available(41)) {
         self.useCase = useCase
-        data = ViewData(.available(41))
+        self.initial = initial
     }
 }
 
 private final class HandoffProbe {
     var samples: Set<String> = []
     var lastSample: String?
+}
+
+private struct GatedSourceContent: View {
+    let model: HostedModel
+    let probe: HandoffProbe
+    var body: some View {
+        if model.showsContent && model.hasContent {
+            AsyncContent(model.data) { value, source in
+                HandoffMarker(value: value, source: source, probe: probe)
+            }
+        } else {
+            Text("Waiting for content")
+        }
+    }
 }
 
 private struct HostedList: View {

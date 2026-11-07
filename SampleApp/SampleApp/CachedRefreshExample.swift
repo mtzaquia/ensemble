@@ -162,7 +162,13 @@ private enum CachedRefreshTiming: String, CaseIterable, Identifiable {
 
 @Observable
 private final class CachedRefreshViewModel {
-    let entries: ViewData<[SampleEntry]>
+    @ViewDataSource(
+        initial: { _ in .available(SampleEntry.cached) },
+        make: { (model: Self) in model.useCase.values() },
+        refresh: { model in model.useCase.reload() }
+    )
+    @ObservationIgnored
+    var entries: ViewData<[SampleEntry]>
     var timing = CachedRefreshTiming.slow
     var rowTaps = 0
 
@@ -189,13 +195,6 @@ private final class CachedRefreshViewModel {
         case .failure:
             "The refresh failed, so AsyncContent is rendering the retained value."
         }
-    }
-
-    init() {
-        entries = ViewData(
-            .available(SampleEntry.cached), make: useCase.values,
-            refresh: useCase.reload
-        )
     }
 
     func refreshSuccessfully() {

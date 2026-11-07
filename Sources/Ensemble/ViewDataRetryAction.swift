@@ -22,12 +22,12 @@
 
 /// An action that reloads the source bound to a ``ViewData`` value.
 ///
-/// Calling this action uses the reload behavior configured by the source initializer. It either
+/// Calling this action uses the reload behavior configured by `@ViewDataSource`. It either
 /// creates a fresh subscription or refreshes the active subscription's producer. A binding with
 /// disabled reload exposes no action instead.
 ///
 /// Calling the action starts a main actor-isolated reload task owned by the binding. Replacing
-/// the source or ending its last observation cancels that retry task. Direct callers that need
+/// the connection or releasing its owning model cancels that retry task. Direct callers that need
 /// to await completion should use `await data.reload()` instead.
 public struct ViewDataRetryAction {
     private let action: @MainActor () -> Void

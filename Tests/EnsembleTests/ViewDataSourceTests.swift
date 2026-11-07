@@ -25,329 +25,200 @@ import SwiftUI
 import Testing
 @testable import Ensemble
 
-@Suite("Managed view data sources")
+@Suite("Model-owned source lifetime")
 struct ViewDataSourceTests {
-    @Test("Macro construction and reads are lazy and expose seeds synchronously")
-    func lazyConstruction() {
+    @Test("First access seeds synchronously and schedules one activation")
+    func lazyConstruction() async {
         let useCase = SourceUseCase()
         let model = SourceModel(useCase: useCase, initial: .available(41))
+        defer { withExtendedLifetime(model) {} }
+        for _ in 0..<10 { await Task.yield() }
+        #expect(useCase.connections == 0)
         let data = model.value
         #expect(model.value === data)
         #expect(data.latestValue == .available(41))
         #expect(data.phase.kind == .success)
         #expect(useCase.connections == 0)
-        #expect(useCase.refreshes == 0)
         let content = AsyncContent(data, loading: .placeholder(0)) { value, _ in Text("\(value)") }
         guard case .content(41, .latest) = content.rendering else {
             Issue.record("The first presentation must use the seed")
             return
         }
-        #expect(useCase.connections == 0)
-    }
-
-    @Test("Two observers share a connection and only the last cancellation stops it")
-    func sharedObservation() async {
-        let useCase = SourceUseCase()
-        let model = SourceModel(useCase: useCase)
-        let data = model.value
-        let first = Task { await data.observe() }
-        let second = Task { await data.observe() }
-        #expect(await eventually { data.binding?.observerCount == 2 })
-        #expect(useCase.refreshes == 0)
-        await data.reload()
-        #expect(await eventually { data.latestValue == .available(1) })
-        #expect(useCase.connections == 1)
-        #expect(useCase.refreshes == 1)
-        first.cancel()
-        await first.value
-        #expect(data.binding?.isConnected == true)
-        second.cancel()
-        await second.value
-        #expect(data.binding?.isConnected == false)
-        #expect(data.latestValue == .available(1))
-        #expect(data.phase.kind == .success)
-
-        let third = Task { await data.observe() }
-        #expect(await eventually { useCase.connections == 2 })
-        #expect(useCase.refreshes == 1)
-        third.cancel()
-        await third.value
-    }
-
-    @Test("Seeded data still connects without requesting an unnecessary refresh")
-    func seededConnection() async {
-        let useCase = SourceUseCase()
-        // Retain the owner while a macro factory needs to invoke it.
-        let model = SourceModel(useCase: useCase, initial: .available(41))
-        let retainedData = model.value
-        let observation = Task { await retainedData.observe() }
         #expect(await eventually { useCase.connections == 1 })
         #expect(useCase.refreshes == 0)
-        #expect(retainedData.latestValue == .available(41))
-        #expect(retainedData.phase.kind == .success)
-        observation.cancel()
-        await observation.value
+        #expect(data.phase.kind == .success)
     }
 
-    @Test("Declaration-site seeds and property initializers connect without refreshing")
+    @Test("Repeated reads and multiple consumers reuse the model's source")
+    func sharedConnection() async {
+        let useCase = SourceUseCase()
+        let model = SourceModel(useCase: useCase)
+        defer { withExtendedLifetime(model) {} }
+        let data = model.value
+        #expect(await eventually { useCase.connections == 1 })
+        for _ in 0..<10 {
+            #expect(model.value === data)
+            _ = AsyncContent(data) { value, _ in Text("\(value)") }
+            await Task.yield()
+        }
+        useCase.continuations[0].yield(.success(42))
+        #expect(await eventually { data.latestValue == .available(42) })
+        #expect(useCase.connections == 1)
+        #expect(useCase.refreshes == 0)
+    }
+
+    @Test("Badge and conditional-gate reads activate without AsyncContent")
+    func derivedReads() async {
+        let useCase = SourceUseCase()
+        let model = SourceModel(useCase: useCase)
+        defer { withExtendedLifetime(model) {} }
+        #expect(model.badgeCount == 0)
+        #expect(!model.canShowContent)
+        #expect(await eventually { useCase.connections == 1 })
+        useCase.continuations[0].yield(.success(42))
+        #expect(await eventually { model.badgeCount == 42 && model.canShowContent })
+    }
+
+    @Test("Each declaration activates independently on its own first access")
     func declaredSeeds() async {
         let useCase = SourceUseCase()
         let model = SourceModel(useCase: useCase)
+        defer { withExtendedLifetime(model) {} }
         #expect(model.seeded.latestValue == .available(7))
-        let seeded = Task { await model.seeded.observe() }
         #expect(await eventually { useCase.connections == 1 })
         #expect(useCase.refreshes == 0)
-        #expect(model.seeded.phase.kind == .success)
-        seeded.cancel()
-        await seeded.value
-        let empty = Task { await model.empty.observe() }
+        #expect(model.empty.latestValue == .unavailable)
         #expect(await eventually { useCase.connections == 2 })
-        #expect(useCase.refreshes == 0)
         #expect(model.empty.phase.kind == .empty)
-        empty.cancel()
-        await empty.value
     }
 
-    @Test("Hot sources reconnect without refreshing even when no value is available")
-    func unseededObservation() async {
-        let useCase = SourceUseCase()
-        let model = SourceModel(useCase: useCase)
-        let data = model.value
-        let first = Task { await data.observe() }
-        #expect(await eventually { useCase.connections == 1 })
-        #expect(useCase.refreshes == 0)
-        #expect(data.phase.kind == .empty)
-        first.cancel()
-        await first.value
-        let second = Task { await data.observe() }
-        #expect(await eventually { useCase.connections == 2 })
-        #expect(useCase.refreshes == 0)
-        await data.reload()
-        #expect(useCase.refreshes == 1)
-        #expect(await eventually { data.latestValue == .available(1) })
-        second.cancel()
-        await second.value
-    }
-
-    @Test("A hot producer can replay its snapshot on subscription without invoking refresh")
+    @Test("A hot producer replays on activation without refreshing")
     func producerOwnsInitialEmission() async {
         let useCase = SourceUseCase()
         useCase.valueOnSubscription = 42
         let model = SourceModel(useCase: useCase)
-        let observation = Task { await model.value.observe() }
-        #expect(await eventually { model.value.latestValue == .available(42) })
+        defer { withExtendedLifetime(model) {} }
+        let data = model.value
+        #expect(await eventually { data.latestValue == .available(42) })
         #expect(useCase.refreshes == 0)
-        observation.cancel()
-        await observation.value
     }
 
-    @Test("Active replacement preserves real model state and rejects obsolete results and retries")
-    func activeReplacement() async throws {
+    @Test("Observed inputs rebind without any view consumer and retain successful content")
+    func activeRebinding() async throws {
         let original = SourceUseCase()
         let replacement = SourceUseCase()
         let model = SourceModel(useCase: original)
+        defer { withExtendedLifetime(model) {} }
         let data = model.seeded
-        let observation = Task { await data.observe() }
-        #expect(await eventually { data.binding?.observerCount == 1 })
+        #expect(await eventually { original.connections == 1 })
         await data.reload()
         #expect(await eventually { data.latestValue == .available(1) })
         let obsoleteRetry = try #require(data.retryAction)
         let obsoleteProducer = original.continuations[0]
-        data.replaceSource(make: replacement.values, refresh: replacement.reload)
+        model.useCase = replacement
+        try #require(await eventually { replacement.connections == 1 })
         #expect(model.seeded === data)
         #expect(data.latestValue == .available(1))
-        #expect(data.phase.kind == .success)
-        #expect(replacement.connections == 1)
         #expect(replacement.refreshes == 0)
         await data.reload()
-        #expect(data.phase.kind == .loading)
-        #expect(replacement.refreshes == 1)
         obsoleteProducer.yield(.success(999))
         obsoleteRetry()
-        #expect(original.refreshes == 1)
         replacement.continuations[0].yield(.success(42))
         #expect(await eventually { data.latestValue == .available(42) })
-        await data.reload()
-        #expect(replacement.refreshes == 2)
-        observation.cancel()
-        await observation.value
+        #expect(original.refreshes == 1)
     }
 
-    @Test("Inactive replacement stays lazy and resetting does not request a refresh")
-    func inactiveReplacement() async {
+    @Test("Inputs changed before first access stay lazy; reset keeps the active source")
+    func unreadInputs() async {
         let original = SourceUseCase()
         let replacement = SourceUseCase()
         let model = SourceModel(useCase: original, initial: .available(41))
-        model.value.replaceSource(make: replacement.values, refresh: replacement.reload)
-        #expect(replacement.connections == 0)
-        let observation = Task { await model.value.observe() }
+        defer { withExtendedLifetime(model) {} }
+        model.useCase = replacement
+        for _ in 0..<10 { await Task.yield() }
+        #expect(original.connections == 0 && replacement.connections == 0)
+        let data = model.value
         #expect(await eventually { replacement.connections == 1 })
-        #expect(original.connections == 0)
+        data.reset()
+        #expect(data.latestValue == .unavailable)
+        replacement.continuations[0].yield(.success(42))
+        #expect(await eventually { data.latestValue == .available(42) })
         #expect(replacement.refreshes == 0)
-        #expect(model.value.latestValue == .available(41))
-        model.value.reset()
-        model.value.replaceSource(make: replacement.values, refresh: replacement.reload)
-        #expect(replacement.refreshes == 0)
-        #expect(model.value.phase.kind == .empty)
-        await model.value.reload()
-        #expect(replacement.refreshes == 1)
-        #expect(await eventually { model.value.latestValue == .available(1) })
-        observation.cancel()
-        await observation.value
     }
 
-    @Test("Source-aware initialization provides the same lazy lifecycle without a macro")
-    func sourceInitialization() async {
+    @Test("Releasing the owner before scheduled activation starts no work")
+    func releasedBeforeActivation() async {
         let useCase = SourceUseCase()
-        let data = ViewData(.available(41), make: useCase.values, refresh: useCase.reload)
+        var model: SourceModel? = SourceModel(useCase: useCase, initial: .available(41))
+        weak let weakModel = model
+        let data = model!.value
+        model = nil
+        #expect(weakModel == nil)
+        await data.reload()
+        for _ in 0..<10 { await Task.yield() }
         #expect(useCase.connections == 0)
-        let lifecycle = AsyncContentSourceObservation()
-        lifecycle.bind(to: data)
-        #expect(await eventually { useCase.connections == 1 })
         #expect(useCase.refreshes == 0)
+        #expect(data.latestValue == .available(41))
+        #expect(data.retryAction == nil)
+    }
+
+    @Test("Owner release cancels a waiting stream even when ViewData is retained")
+    func releasedOwnerCancelsSource() async {
+        let useCase = SourceUseCase()
+        var model: SourceModel? = SourceModel(useCase: useCase, initial: .available(41))
+        weak let weakModel = model
+        let data = model!.value
+        #expect(await eventually { useCase.connections == 1 })
+        model = nil
+        #expect(weakModel == nil)
+        #expect(data.binding?.isConnected == false)
+        #expect(data.binding?.isRunning == false)
+        #expect(data.retryAction == nil)
+        #expect(await eventually {
+            if case .terminated = useCase.continuations[0].yield(.success(99)) { return true }
+            return false
+        })
+        let revision = data.presentationRevision
+        await data.reload()
+        #expect(data.presentationRevision == revision)
         #expect(data.latestValue == .available(41))
     }
 
-    @Test("Owner-based initialization matches macro timing, retention, and cancellation")
-    func ownerInitialization() async {
-        let useCase = SourceUseCase()
-        let data = ViewData(
-            .available(41), owner: useCase,
-            make: { $0.values() }, refresh: { $0.reload() }
-        )
-        #expect(useCase.connections == 0)
-        #expect(useCase.refreshes == 0)
-        let content = AsyncContent(data, loading: .placeholder(0)) { value, _ in Text("\(value)") }
-        guard case .content(41, .latest) = content.rendering else {
-            Issue.record("The owner initializer must expose its seed on the first presentation")
-            return
-        }
-        let observation = Task { await data.observe() }
-        #expect(await eventually { data.binding?.observerCount == 1 })
+    @Test("A completed source stays complete across reads and reload starts fresh work")
+    func completedSource() async {
+        let model = ColdSourceModel()
+        defer { withExtendedLifetime(model) {} }
+        let data = model.value
+        #expect(await eventually { data.latestValue == .available(1) && data.binding?.isRunning == false })
+        for _ in 0..<10 { _ = model.value; await Task.yield() }
+        #expect(model.requests == 1)
         await data.reload()
-        #expect(await eventually { data.latestValue == .available(1) })
-        #expect(useCase.connections == 1)
-        #expect(useCase.refreshes == 1)
-        useCase.continuations[0].yield(.failure(.offline))
-        #expect(await eventually { data.phase.kind == .failure })
-        #expect(data.latestValue == .available(1))
-        await data.reload()
-        #expect(await eventually { data.latestValue == .available(2) })
-        observation.cancel()
-        await observation.value
-        #expect(data.binding?.isConnected == false)
+        #expect(model.requests == 2)
         #expect(data.latestValue == .available(2))
     }
 
-    @Test("Owner initializer does not retain its owner or reconnect after it is released")
-    func initializerWeakOwner() async {
-        var model: SourceModel? = SourceModel(useCase: SourceUseCase())
-        weak var weakModel: SourceModel?
-        weakModel = model
-        let data = ViewData(
-            .available(41), owner: model!,
-            make: { $0.useCase.values() }, refresh: { $0.useCase.reload() }
-        )
-        let useCase = model!.useCase
-        let observation = Task { await data.observe() }
-        #expect(await eventually { data.binding?.observerCount == 1 })
-        await data.reload()
-        #expect(await eventually { data.latestValue == .available(1) })
-        model = nil
-        #expect(weakModel == nil)
-        await data.reload()
-        #expect(useCase.refreshes == 1)
-        observation.cancel()
-        await observation.value
-        let reconnection = Task { await data.observe() }
-        #expect(await eventually { data.binding?.observerCount == 1 })
-        #expect(useCase.connections == 1)
-        #expect(data.binding?.isConnected == false)
-        #expect(data.latestValue == .available(1))
-        reconnection.cancel()
-        await reconnection.value
+    @Test("Immediate cold reload shares initial activation instead of fetching twice")
+    func immediateColdReload() async {
+        let model = ColdSourceModel()
+        defer { withExtendedLifetime(model) {} }
+        await model.value.reload()
+        #expect(model.requests == 1)
+        #expect(model.value.latestValue == .available(1))
     }
 
-    @Test("Self resolves the owner in generic models without rewriting strings or metatypes")
+    @Test("Self resolves generic owners without rewriting strings or metatypes")
     func genericOwnerInference() async {
         let model = GenericSourceModel<Int>()
-        let observation = Task { await model.value.observe() }
-        #expect(await eventually { model.value.latestValue == .available(1) })
-        observation.cancel()
-        await observation.value
+        defer { withExtendedLifetime(model) {} }
+        let data = model.value
+        #expect(await eventually { data.latestValue == .available(1) })
     }
 
-    @Test("Cold sources resubscribe on reload without a refresh callback")
-    func coldSource() async {
-        let model = ColdSourceModel()
-        let observation = Task { await model.value.observe() }
-        #expect(await eventually { model.value.latestValue == .available(1) })
-        await model.value.reload()
-        #expect(await eventually { model.value.latestValue == .available(2) })
-        observation.cancel()
-        await observation.value
-    }
-
-    @Test("Retry uses the active producer and a cancelled observer never connects")
-    func retryAndEarlyCancellation() async {
-        let useCase = SourceUseCase()
-        let model = SourceModel(useCase: useCase)
-        let cancelled = Task { await model.value.observe() }
-        cancelled.cancel()
-        await cancelled.value
-        #expect(useCase.connections == 0)
-        let observation = Task { await model.value.observe() }
-        #expect(await eventually { useCase.connections == 1 })
-        useCase.continuations[0].yield(.failure(.offline))
-        #expect(await eventually { model.value.phase.kind == .failure })
-        model.value.retryAction?()
-        #expect(await eventually { useCase.refreshes == 1 })
-        #expect(await eventually { model.value.latestValue == .available(1) })
-        observation.cancel()
-        await observation.value
-    }
-
-    @Test("Factories do not keep the owning observable model alive")
-    func weakOwner() async {
-        let useCase = SourceUseCase()
-        var model: SourceModel? = SourceModel(useCase: useCase)
-        weak var weakModel: SourceModel?
-        weakModel = model
-        let data = model!.value
-        let observation = Task { await data.observe() }
-        #expect(await eventually { useCase.connections == 1 })
-        model = nil
-        #expect(weakModel == nil)
-        await data.reload()
-        observation.cancel()
-        await observation.value
-    }
-
-    @Test("Ordinary data remains passive")
+    @Test("Ordinary state remains passive")
     func passiveData() async {
         let data = ViewData<Int>()
-        await data.observe()
         await data.reload()
         #expect(data.phase.kind == .empty)
-    }
-
-    @Test("Lifecycle storage notices a source installed after an initially passive read")
-    func lateSourceInstallation() async {
-        let data = ViewData<Int>()
-        let lifecycle = AsyncContentSourceObservation()
-        lifecycle.bind(to: data)
-        let useCase = SourceUseCase()
-        data._installSource(
-            owner: useCase,
-            make: { $0.values() },
-            refresh: { $0.reload() },
-            receive: { result, sink in sink.receive(result) }
-        )
-        lifecycle.bind(to: data)
-        #expect(await eventually { useCase.connections == 1 })
-        #expect(useCase.refreshes == 0)
-        await data.reload()
-        #expect(await eventually { data.latestValue == .available(1) })
     }
 
     private func eventually(_ condition: () -> Bool) async -> Bool {
@@ -363,10 +234,16 @@ private enum SourceFailure: Error { case offline }
 
 @Observable
 private final class SourceModel {
-    let useCase: SourceUseCase
-    var selection = 0
+    var useCase: SourceUseCase
+
+    var badgeCount: Int {
+        if case .available(let count) = value.latestValue { count } else { 0 }
+    }
+    var canShowContent: Bool { badgeCount > 0 }
+    let initial: ViewDataAvailability<Int>
 
     @ViewDataSource(
+        initial: { (model: Self) in model.initial },
         make: { (model: Self) in model.useCase.values() },
         refresh: { model in model.useCase.reload() }
     )
@@ -374,9 +251,9 @@ private final class SourceModel {
     var value: ViewData<Int>
 
     @ViewDataSource(
+        initial: { _ in .available(7) },
         make: { (model: Self) in model.useCase.values() },
-        refresh: { (model: Self) in model.useCase.reload() },
-        initialValue: .available(7)
+        refresh: { (model: Self) in model.useCase.reload() }
     )
     @ObservationIgnored
     var seeded: ViewData<Int>
@@ -386,11 +263,11 @@ private final class SourceModel {
         refresh: { model in model.useCase.reload() }
     )
     @ObservationIgnored
-    var empty: ViewData<Int> = ViewData()
+    var empty: ViewData<Int>
 
     init(useCase: SourceUseCase, initial: ViewDataAvailability<Int> = .unavailable) {
         self.useCase = useCase
-        value = ViewData(initial)
+        self.initial = initial
     }
 }
 
@@ -398,7 +275,7 @@ private final class ColdSourceModel {
     var requests = 0
 
     @ViewDataSource(make: { (model: Self) in model.values() })
-    var value: ViewData<Int> = ViewData()
+    var value: ViewData<Int>
 
     func values() -> AsyncStream<Result<Int, SourceFailure>> {
         requests += 1
@@ -435,7 +312,7 @@ private final class GenericSourceModel<Element> {
         // A comment mentioning self and a metatype must not be treated as captures.
         model.values(label: "self", type: Element.self)
     })
-    var value: ViewData<Int> = ViewData()
+    var value: ViewData<Int>
 
     func values(label: String, type: Element.Type) -> AsyncStream<Result<Int, SourceFailure>> {
         AsyncStream { continuation in

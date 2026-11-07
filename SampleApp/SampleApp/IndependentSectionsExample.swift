@@ -118,19 +118,29 @@ struct IndependentSectionsExample: View {
 
 @Observable
 private final class IndependentSectionsViewModel {
-    let activity: ViewData<[SampleEntry]>
-    let account: ViewData<[SampleEntry]>
-    let tip: ViewData<String>
+    @ViewDataSource(
+        make: { (model: Self) in model.useCase.activityValues() },
+        refresh: { model in await model.useCase.reloadActivity() }
+    )
+    @ObservationIgnored
+    var activity: ViewData<[SampleEntry]>
+
+    @ViewDataSource(
+        initial: { _ in .available(SampleEntry.cached) },
+        make: { (model: Self) in model.useCase.accountValues() },
+        refresh: { model in await model.useCase.reloadAccount() }
+    )
+    @ObservationIgnored
+    var account: ViewData<[SampleEntry]>
+
+    @ViewDataSource(
+        make: { (model: Self) in model.useCase.tipValues() },
+        refresh: { model in await model.useCase.reloadTip() }
+    )
+    @ObservationIgnored
+    var tip: ViewData<String>
 
     @ObservationIgnored private let useCase = IndependentSectionsUseCase()
-
-    init() {
-        activity = ViewData(make: useCase.activityValues, refresh: useCase.reloadActivity)
-        account = ViewData(
-            .available(SampleEntry.cached), make: useCase.accountValues, refresh: useCase.reloadAccount
-        )
-        tip = ViewData(make: useCase.tipValues, refresh: useCase.reloadTip)
-    }
 
     func reload() async {
         await Ensemble.reload(activity, account, tip)

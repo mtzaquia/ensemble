@@ -218,7 +218,13 @@ private enum LoadingLabRequestStage: String, CaseIterable, Identifiable {
 
 @Observable
 private final class LoadingLabViewModel {
-    let entries: ViewData<[SampleEntry]?>
+    @ViewDataSource(
+        initial: { _ in .available(SampleEntry.cached) },
+        make: { (model: Self) in model.useCase.values() },
+        refresh: { _ in }
+    )
+    @ObservationIgnored
+    var entries: ViewData<[SampleEntry]?>
 
     var duration = 3.0
     private(set) var shouldFail = false
@@ -277,10 +283,6 @@ private final class LoadingLabViewModel {
     }
 
     init() {
-        entries = ViewData(
-            .available(SampleEntry.cached), make: useCase.values,
-            refresh: {}
-        )
         record(
             title: "Sample value installed",
             detail: "The lab started with retained rows ready for the first request.",
