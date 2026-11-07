@@ -60,6 +60,9 @@ func start() {
 ```
 
 Connection is scheduled outside the current call stack and repeated calls share one subscription.
+The same startup choice applies to nested sections needed alongside their parent, conditional
+charts needed before display, and model-only stream consumers. See the
+[startup table](source-backed-data.md#connect-without-rendering) and [testing guide](testing.md).
 The seed is immediately renderable; no startup task delays it. Default loading and failure policies
 retain the latest successful value. Empty collections are successes: render their empty state inside
 the content builder. See [Presentation policies](presentation-policies.md) for failure UI and retry.

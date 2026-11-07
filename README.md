@@ -178,6 +178,8 @@ The [presentation guide](docs/presentation-policies.md) covers loading, failure,
   and failure-content behavior per view.
 - [Sources and lifecycle](docs/sources-and-lifecycle.md) — adapt source update types and understand
   reload, reset, completion, and cancellation.
+- [Testing](docs/testing.md) — test passive seeds, connect source harnesses, and synchronize updates.
+- [Dependency context](docs/dependency-context.md) — understand callback timing and dependency propagation.
 - [Diagnostics](docs/diagnostics.md) — inspect load, binding, reload, and cancellation activity.
 
 ## Sample app

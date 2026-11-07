@@ -43,6 +43,7 @@ extension ViewData {
     /// - Parameters:
     ///   - existing: The storage previously created for the property, if any.
     ///   - owner: The model supplied to source callbacks without retaining it between calls.
+    ///   - declaration: The macro-generated type and property name used in lifecycle diagnostics.
     ///   - id: The macro's identity projection, or a constant for a fixed source.
     ///   - initial: The successful availability to expose on first access; nil starts unavailable.
     ///   - make: A prompt, untracked factory that builds the selected source.
@@ -52,6 +53,7 @@ extension ViewData {
     public static func _source<Owner: AnyObject, ID: Equatable, Source: AsyncSequence>(
         _ existing: _Source?,
         owner: Owner,
+        declaration: String,
         id: @escaping @MainActor (Owner) -> ID,
         initial: (@MainActor (Owner) -> ViewDataAvailability<Value>)?,
         make: @escaping @MainActor (Owner) -> Source,
@@ -62,7 +64,7 @@ extension ViewData {
         if let existing { return existing }
         let data = ViewData(initial?(owner) ?? .unavailable)
         data.binding = ViewDataBinding(
-            destination: data, owner: owner, id: id, make: make, refresh: refresh,
+            destination: data, owner: owner, declaration: declaration, id: id, make: make, refresh: refresh,
             allowsReload: allowsReload, receive: receive
         )
         return _Source(data)

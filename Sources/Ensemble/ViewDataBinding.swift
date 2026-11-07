@@ -46,6 +46,7 @@ final class ViewDataBinding<Value> {
     private let makeConnection: Connect
     private let observeIdentity: @MainActor (@escaping @Sendable () -> Void) -> Bool?
     private let reloadBehavior: ReloadBehavior
+    private let logSource: EnsembleLogSource
     private weak var destination: ViewData<Value>?
     private var activationTask: Task<Void, Never>?
     private var isActive = true
@@ -65,6 +66,7 @@ final class ViewDataBinding<Value> {
     init<Owner: AnyObject, ID: Equatable, Source: AsyncSequence>(
         destination: ViewData<Value>,
         owner: Owner,
+        declaration: String,
         id: @escaping @MainActor (Owner) -> ID,
         make: @escaping @MainActor (Owner) -> Source,
         refresh: (@MainActor (Owner) async -> Void)?,
@@ -95,49 +97,56 @@ final class ViewDataBinding<Value> {
             receive(owner, element, sink)
         }
         self.destination = destination
+        self.logSource = EnsembleLogSource(declaration: declaration, destination: ObjectIdentifier(destination))
+        ensembleLog.ensembleDebug(.sourceInstalled(source: logSource))
     }
 
-    func connect() {
+    func connect(reason: EnsembleConnectionReason = .connect) {
         guard isActive, !isConnected, activationTask == nil else { return }
+        ensembleLog.ensembleDebug(.connectionScheduled(source: logSource, reason: reason))
         activationTask = Task { [weak self] in
             guard let self, !Task.isCancelled else { return }
             self.activationTask = nil
-            self.activate()
+            self.activate(reason: reason)
         }
     }
 
-    private func activate() {
+    private func activate(reason: EnsembleConnectionReason) {
         activationTask?.cancel()
         activationTask = nil
         guard isActive, !isConnected else { return }
         updateIdentityIfNeeded()
         guard isActive else { return }
-        start()
+        start(reason: reason)
         canJoinInitialLoad = task != nil
     }
 
-    func reload() async {
+    func reload(trigger: EnsembleReloadTrigger = .reload) async {
         guard !Task.isCancelled, isActive else { return }
         if case .disabled = reloadBehavior { return }
-        activate()
+        activate(reason: .reload)
         guard isConnected, let destination else { return }
         updateIdentityIfNeeded()
         guard isActive else { return }
-        let identifier = ObjectIdentifier(destination)
         switch reloadBehavior {
         case .resubscribe:
-            ensembleLog.ensembleDebug(.reloadRequested(destination: identifier, mode: .resubscribe))
+            ensembleLog.ensembleDebug(.reloadRequested(
+                source: logSource, generation: revision, mode: .resubscribe, trigger: trigger
+            ))
             if !needsRebind, canJoinInitialLoad, task != nil {
                 canJoinInitialLoad = false
+                ensembleLog.ensembleDebug(.reloadJoinedInitial(source: logSource, generation: revision))
             } else {
-                reconnect(startsLoading: true)
+                reconnect(startsLoading: true, reason: needsRebind ? .identityChanged : .coldReload)
             }
             await waitForConnection(task)
         case .refresh(let prepare):
             guard let refresh = prepare() else { return }
-            ensembleLog.ensembleDebug(.reloadRequested(destination: identifier, mode: .refresh))
+            ensembleLog.ensembleDebug(.reloadRequested(
+                source: logSource, generation: revision, mode: .refresh, trigger: trigger
+            ))
             if needsRebind || task == nil || connectionValidity?.isValid == false {
-                reconnect(startsLoading: true)
+                reconnect(startsLoading: true, reason: needsRebind ? .identityChanged : .completedSource)
             } else {
                 beginLoading()
             }
@@ -163,6 +172,7 @@ final class ViewDataBinding<Value> {
             connection?.cancel()
         }
         if Task.isCancelled, revision == currentRevision {
+            ensembleLog.ensembleDebug(.bindingRequestCancelled(source: logSource, generation: currentRevision))
             task = nil
             destination?.removeRetryAction()
             finishLoading()
@@ -177,26 +187,26 @@ final class ViewDataBinding<Value> {
         identityObservation = nil
         needsRebind = false
         cancelRetry()
-        disconnect()
+        disconnect(reason: .ownerReleased)
     }
 
-    private func start() {
+    private func start(reason: EnsembleConnectionReason) {
         // Activating a hot source only subscribes. Its refresh action is invoked explicitly by
         // reload/retry. Cold sequences start their work when connected.
         let startsLoading: Bool
         if case .refresh = reloadBehavior { startsLoading = false } else { startsLoading = true }
-        reconnect(startsLoading: startsLoading)
+        reconnect(startsLoading: startsLoading, reason: reason)
     }
 
-    private func reconnect(startsLoading: Bool) {
+    private func reconnect(startsLoading: Bool, reason: EnsembleConnectionReason) {
         needsRebind = false
-        disconnect()
+        disconnect(reason: .replaced)
         guard isActive, let destination else { return }
         isConnected = true
         connectionValidity = SourceValidity()
         let currentRevision = revision
         ensembleLog.ensembleDebug(.bindingStarted(
-            destination: ObjectIdentifier(destination), reload: reloadBehavior.logMode
+            source: logSource, generation: currentRevision, reason: reason, reload: reloadBehavior.logMode
         ))
         if case .disabled = reloadBehavior {
             destination.removeRetryAction()
@@ -207,16 +217,17 @@ final class ViewDataBinding<Value> {
                 self.retryRevision &+= 1
                 let request = self.retryRevision
                 self.retryTask = Task { [weak self] in
-                    await self?.reload()
+                    await self?.reload(trigger: .retry)
                     if let self, self.retryRevision == request { self.retryTask = nil }
                 }
             })
         }
         if startsLoading { beginLoading() }
-        if !makeConnection(self, currentRevision), accepts(currentRevision) { disconnect() }
+        if !makeConnection(self, currentRevision), accepts(currentRevision) { disconnect(reason: .ownerReleased) }
     }
 
-    private func disconnect() {
+    private func disconnect(reason: EnsembleDisconnectionReason) {
+        let previousRevision = revision
         canJoinInitialLoad = false
         connectionValidity?.invalidate()
         connectionValidity = nil
@@ -227,9 +238,7 @@ final class ViewDataBinding<Value> {
         isConnected = false
         destination?.removeRetryAction()
         finishLoading()
-        if let destination {
-            ensembleLog.ensembleDebug(.bindingCancelled(destination: ObjectIdentifier(destination)))
-        }
+        ensembleLog.ensembleDebug(.bindingCancelled(source: logSource, generation: previousRevision, reason: reason))
     }
 
     private func accepts(_ revision: UInt) -> Bool {
@@ -254,13 +263,15 @@ final class ViewDataBinding<Value> {
             needsRebind = true
             connectionValidity?.invalidate()
             cancelRetry()
+        } else if isConnected {
+            ensembleLog.ensembleDebug(.bindingIdentityUnchanged(source: logSource, generation: revision))
         }
     }
 
     private func identityDidChange() {
         guard isActive else { return }
         updateIdentityIfNeeded()
-        if isActive, needsRebind { start() }
+        if isActive, needsRebind { start(reason: .identityChanged) }
     }
 
     private func beginLoading() {
@@ -292,16 +303,15 @@ final class ViewDataBinding<Value> {
         let sink = ViewDataSink<Value> { [weak self] action in
             guard let self, self.accepts(revision), let destination = self.destination else { return }
             self.canJoinInitialLoad = false
-            let identifier = ObjectIdentifier(destination)
             switch action {
             case .value(let value):
-                ensembleLog.ensembleDebug(.bindingReceivedValue(destination: identifier))
+                ensembleLog.ensembleDebug(.bindingReceivedValue(source: self.logSource, generation: revision))
                 destination.set(value)
             case .failure(let error):
-                ensembleLog.ensembleDebug(.bindingReceivedFailure(destination: identifier, error: error))
+                ensembleLog.ensembleDebug(.bindingReceivedFailure(source: self.logSource, generation: revision, error: error))
                 destination.fail(error)
             case .reset:
-                ensembleLog.ensembleDebug(.bindingReceivedReset(destination: identifier))
+                ensembleLog.ensembleDebug(.bindingReceivedReset(source: self.logSource, generation: revision))
                 destination.reset()
             }
         }
@@ -311,9 +321,7 @@ final class ViewDataBinding<Value> {
                     self.finishLoading()
                     self.task = nil
                     self.canJoinInitialLoad = false
-                    if let destination = self.destination {
-                        ensembleLog.ensembleDebug(.bindingCompleted(destination: ObjectIdentifier(destination)))
-                    }
+                    ensembleLog.ensembleDebug(.bindingCompleted(source: self.logSource, generation: revision))
                 }
             }
             do {

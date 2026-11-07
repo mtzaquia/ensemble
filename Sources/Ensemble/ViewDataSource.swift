@@ -47,6 +47,10 @@
 /// publish. Rebinding never invokes refresh; initial requests, reload, and retry are explicit.
 /// Cold sequences start work on connection. Repeated reads do not restart completed sequences.
 /// A callback temporarily retains the owner while it runs, including across an awaited refresh.
+/// The model's creation-time dependency context is not restored around callbacks. `initial` runs
+/// in the first reader's context; source tasks inherit their connection context, and refresh runs
+/// in the reload caller's task. Prefer owner-held collaborators and explicitly propagate any
+/// dependency framework's context when constructing new ones. Keep seeds cheap and read-only.
 ///
 /// Write `(model: Self)` on `initial` or `make` to infer the other callbacks' owner type. Callbacks
 /// must be inline closures. Direct instance `self` and `super` captures are diagnosed; use the

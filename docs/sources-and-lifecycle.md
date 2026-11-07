@@ -27,6 +27,11 @@ or `Ensemble.connect(profile, activity, notifications)`. Both are synchronous an
 outside the current call stack. Repeated calls share one connection without awaiting initial data
 or invoking hot refresh. `reload()` ensures startup itself before requesting work.
 
+Connect explicitly for any source that needs updates before its `AsyncContent` renders, including
+nested sections starting alongside a parent and tests without a view. See the
+[startup table](source-backed-data.md#connect-without-rendering). Callback execution does not restore
+the model's creation environment; see [Dependency context](dependency-context.md).
+
 ## Model lifetime and reset
 
 Once connected, hiding a section, navigating away, or finishing a reload does not disconnect its

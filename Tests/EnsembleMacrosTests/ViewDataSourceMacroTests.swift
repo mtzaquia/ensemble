@@ -44,6 +44,7 @@ struct ViewDataSourceMacroTests {
                         let __macro_local_4datafMu_ = ViewData<Int>._source(
                             _value,
                             owner: self,
+                            declaration: "Model.value",
                             id: {\(keyed ? "" : " _ in")
                                 \(keyed ? "$0 [keyPath: \\.filterID]" : "false")
                             },
@@ -92,6 +93,7 @@ struct ViewDataSourceMacroTests {
                         let __macro_local_4datafMu_ = ViewData<Int>._source(
                             _value,
                             owner: self,
+                            declaration: "Model.value",
                             id: {\(keyed ? "" : " _ in")
                                 \(keyed ? "$0 [keyPath: \\.filterID]" : "false")
                             },

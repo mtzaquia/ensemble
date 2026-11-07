@@ -164,8 +164,8 @@ private enum AsyncContentData<Value> {
 
     func connect() {
         switch self {
-        case .value(let data): data.connect()
-        case .optionalValue(let data): data.connect()
+        case .value(let data): data.binding?.connect(reason: .render)
+        case .optionalValue(let data): data.binding?.connect(reason: .render)
         }
     }
 

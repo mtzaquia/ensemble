@@ -54,6 +54,11 @@ first property read, before returning the data. Reading creates a dormant bindin
 start the producer. Omit it to start unavailable, or provide a fixed seed with
 `initial: { _ in .available(cachedValue) }`.
 
+The seed is the only application callback evaluated by a passive first read. Keep it cheap: read
+an already-held snapshot rather than starting work. A test assertion or derived property can be
+that first reader, so install seed dependencies before accessing the property. See
+[Testing source-backed models](testing.md) and [Dependency context](dependency-context.md).
+
 The seed is not retained or reapplied after reset, reload, cancellation, or automatic rebinding.
 Successful empty collections and optional `nil` are available successes. Caching policy and the
 projection used to obtain the snapshot stay in the application or data layer.
@@ -166,8 +171,23 @@ failure retry. Connection and identity-driven rebinding still work.
 ## Connect without rendering
 
 Plain property, phase, and latest-value reads stay passive. Rendering `AsyncContent` requests
-connection even if its initial presentation is hidden. A condition that prevents `AsyncContent`
-from being constructed needs startup elsewhere:
+connection even if its initial presentation is hidden. Connect explicitly whenever updates must
+start before that `AsyncContent` renders:
+
+| Consumer or requirement | Startup |
+| --- | --- |
+| An `AsyncContent` that renders immediately | Automatic, including initially hidden presentation |
+| A badge or other `latestValue`/`phase`-only consumer | `connect()` from model startup |
+| Content behind a condition derived from the source | Connect before evaluating the gate |
+| A nested section that should load alongside its parent | Connect both from model startup |
+| A conditional chart or section that only needs updates when shown | Automatic when its `AsyncContent` renders |
+| Data needed before the first render | Connect from model startup, or await `reload()` when requesting work |
+| A test exercising a stream without rendering | Connect explicitly and synchronize with the fixture |
+| A test exercising only a seed or injected presentation | Leave the source dormant |
+
+Nesting alone does not require eager connection. Choose it when waiting for the parent or a
+conditional branch to render would delay required updates. A warm seed can look correct while
+its source remains dormant; reading it does not guarantee freshness.
 
 ```swift
 func start() {
@@ -195,7 +215,7 @@ event and model effects.
   Remove `replaceSource` calls and duplicated configuration. There is no public reconnect method.
 - Remove `ViewDataContext` registration, startup binding tasks, explicit `observe()` calls, and
   consumer observation modifiers. `AsyncContent` requests connection automatically. Use synchronous
-  `connect()` from startup for badges and conditional gates; the owning model controls teardown.
+  `connect()` from startup for updates needed before rendering; the owning model controls teardown.
 - Keep `await data.load(...)` for one-shot operations and `await Ensemble.reload(...)` for
   independent screen requests. These operations do not change source declarations.
 - Replace reload-disabled initializer configuration with `allowsReload: false` on the macro.
@@ -204,4 +224,4 @@ The Source lifecycle sample changes an explicit source identity and lets Observa
 remain visible. Package tests cover dependency scope, input changes, stale callbacks, seeds, weak
 owners, cancellation, reload, and hosted SwiftUI rendering.
 
-Next: [Sources and lifecycle](sources-and-lifecycle.md) · [Presentation policies](presentation-policies.md)
+Next: [Testing](testing.md) · [Dependency context](dependency-context.md) · [Sources and lifecycle](sources-and-lifecycle.md)

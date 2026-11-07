@@ -206,6 +206,8 @@ public struct ViewDataSourceMacro: AccessorMacro, PeerMacro {
         let receive = args["receive"].flatMap { $0 == "nil" ? nil : $0 }
             ?? "{ _, result, sink in sink.receive(result) }"
         let data = context.makeUniqueName("data")
+        let owner = context.lexicalContext.first!.cast(ClassDeclSyntax.self).name.text
+        let declaration = StringLiteralExprSyntax(content: "\(owner).\(name)")
         let identity: String
         if let id = args["id"] {
             identity = "{ $0[keyPath: \(id)] }"
@@ -218,6 +220,7 @@ public struct ViewDataSourceMacro: AccessorMacro, PeerMacro {
                 let \(data) = \(raw: type)._source(
                     _\(raw: name),
                     owner: self,
+                    declaration: \(declaration),
                     id: \(raw: identity),
                     initial: \(raw: args["initial"] ?? "nil"),
                     make: \(raw: make),

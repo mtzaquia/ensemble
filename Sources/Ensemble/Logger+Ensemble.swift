@@ -33,7 +33,7 @@ public enum Ensemble {
         /// Logs loads, bindings, reloads, cancellations, and failures.
         case normal
 
-        /// Includes each accepted binding value or reset and source completion.
+        /// Includes dormant sources, scheduled connections, unchanged identities, values, and completion.
         case trace
     }
 
@@ -62,22 +62,50 @@ enum EnsembleReloadMode: String {
     case disabled
 }
 
+enum EnsembleConnectionReason: String, CaseIterable {
+    case render, connect, reload, identityChanged, coldReload, completedSource
+}
+
+enum EnsembleReloadTrigger: String { case reload, retry }
+enum EnsembleDisconnectionReason: String { case replaced, ownerReleased }
+
+struct EnsembleLogSource {
+    let declaration: String
+    let destination: ObjectIdentifier
+
+    var fields: String {
+        let name = declaration
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "\\r")
+            .replacingOccurrences(of: "\t", with: "\\t")
+        return "source=\"\(name)\" destination=\(destination)"
+    }
+}
+
 enum EnsembleLogEvent {
     case loadStarted(destination: ObjectIdentifier)
     case loadSucceeded(destination: ObjectIdentifier)
     case loadFailed(destination: ObjectIdentifier, error: any Error)
     case loadCancelled(destination: ObjectIdentifier)
-    case bindingStarted(destination: ObjectIdentifier, reload: EnsembleReloadMode)
-    case bindingReceivedValue(destination: ObjectIdentifier)
-    case bindingReceivedReset(destination: ObjectIdentifier)
-    case bindingReceivedFailure(destination: ObjectIdentifier, error: any Error)
-    case bindingCompleted(destination: ObjectIdentifier)
-    case reloadRequested(destination: ObjectIdentifier, mode: EnsembleReloadMode)
-    case bindingCancelled(destination: ObjectIdentifier)
+    case sourceInstalled(source: EnsembleLogSource)
+    case connectionScheduled(source: EnsembleLogSource, reason: EnsembleConnectionReason)
+    case bindingStarted(source: EnsembleLogSource, generation: UInt, reason: EnsembleConnectionReason, reload: EnsembleReloadMode)
+    case bindingIdentityUnchanged(source: EnsembleLogSource, generation: UInt)
+    case reloadJoinedInitial(source: EnsembleLogSource, generation: UInt)
+    case bindingReceivedValue(source: EnsembleLogSource, generation: UInt)
+    case bindingReceivedReset(source: EnsembleLogSource, generation: UInt)
+    case bindingReceivedFailure(source: EnsembleLogSource, generation: UInt, error: any Error)
+    case bindingCompleted(source: EnsembleLogSource, generation: UInt)
+    case reloadRequested(source: EnsembleLogSource, generation: UInt, mode: EnsembleReloadMode, trigger: EnsembleReloadTrigger)
+    case bindingRequestCancelled(source: EnsembleLogSource, generation: UInt)
+    case bindingCancelled(source: EnsembleLogSource, generation: UInt, reason: EnsembleDisconnectionReason)
 
     var logLevel: Ensemble.DebugLogLevel {
         switch self {
-        case .bindingReceivedValue, .bindingReceivedReset, .bindingCompleted:
+        case .sourceInstalled, .connectionScheduled, .bindingIdentityUnchanged, .reloadJoinedInitial,
+             .bindingReceivedValue, .bindingReceivedReset, .bindingCompleted:
             .trace
         default:
             .normal
@@ -94,20 +122,30 @@ enum EnsembleLogEvent {
             "[load] ✗ failed | destination=\(destination) error=\(error)"
         case .loadCancelled(let destination):
             "[load] • cancelled | destination=\(destination)"
-        case .bindingStarted(let destination, let reload):
-            "[bind] → started | destination=\(destination) reload=\(reload.rawValue)"
-        case .bindingReceivedValue(let destination):
-            "[bind] ✓ received value | destination=\(destination)"
-        case .bindingReceivedReset(let destination):
-            "[bind] • received reset | destination=\(destination)"
-        case .bindingReceivedFailure(let destination, let error):
-            "[bind] ✗ received failure | destination=\(destination) error=\(error)"
-        case .bindingCompleted(let destination):
-            "[bind] • completed | destination=\(destination)"
-        case .reloadRequested(let destination, let mode):
-            "[reload] ↻ requested | destination=\(destination) mode=\(mode.rawValue)"
-        case .bindingCancelled(let destination):
-            "[bind] • cancelled | destination=\(destination)"
+        case .sourceInstalled(let source):
+            "[bind] • installed | \(source.fields) state=dormant"
+        case .connectionScheduled(let source, let reason):
+            "[bind] ⏳ scheduled | \(source.fields) reason=\(reason.rawValue)"
+        case .bindingStarted(let source, let generation, let reason, let reload):
+            "[bind] → started | \(source.fields) generation=\(generation) reason=\(reason.rawValue) reload=\(reload.rawValue)"
+        case .bindingIdentityUnchanged(let source, let generation):
+            "[bind] • kept connection | \(source.fields) generation=\(generation) reason=identityEqual"
+        case .reloadJoinedInitial(let source, let generation):
+            "[reload] • joined initial load | \(source.fields) generation=\(generation)"
+        case .bindingReceivedValue(let source, let generation):
+            "[bind] ✓ received value | \(source.fields) generation=\(generation)"
+        case .bindingReceivedReset(let source, let generation):
+            "[bind] • received reset | \(source.fields) generation=\(generation)"
+        case .bindingReceivedFailure(let source, let generation, let error):
+            "[bind] ✗ received failure | \(source.fields) generation=\(generation) error=\(error)"
+        case .bindingCompleted(let source, let generation):
+            "[bind] • completed | \(source.fields) generation=\(generation)"
+        case .reloadRequested(let source, let generation, let mode, let trigger):
+            "[reload] ↻ requested | \(source.fields) generation=\(generation) mode=\(mode.rawValue) trigger=\(trigger.rawValue)"
+        case .bindingRequestCancelled(let source, let generation):
+            "[reload] • cancelled cold request | \(source.fields) generation=\(generation)"
+        case .bindingCancelled(let source, let generation, let reason):
+            "[bind] • cancelled | \(source.fields) generation=\(generation) reason=\(reason.rawValue)"
         }
     }
 
@@ -126,7 +164,7 @@ extension Logger {
     }
 }
 
-private extension Ensemble.DebugLogLevel {
+extension Ensemble.DebugLogLevel {
     func includes(_ eventLevel: Self) -> Bool {
         switch (self, eventLevel) {
         case (.trace, _), (.normal, .normal), (.off, .off):
