@@ -31,6 +31,7 @@ struct SourceRebindingTests {
         let model = RebindingModel()
         defer { withExtendedLifetime(model) {} }
         let data = model.data
+        data.connect()
         #expect(await eventually { model.source.requests.count == 1 })
         model.source.requests[0].producer.yield(.success(41))
         #expect(await eventually { data.latestValue == .available(41) })
@@ -60,6 +61,7 @@ struct SourceRebindingTests {
         for _ in 0..<10 { await Task.yield() }
         #expect(model.source.requests.isEmpty)
         let data = model.data
+        data.connect()
         #expect(await eventually { model.source.requests.count == 1 })
         model.query = 4
         #expect(await eventually { model.source.requests.map(\.query) == [3, 4] })
@@ -71,6 +73,7 @@ struct SourceRebindingTests {
         let model = RebindingModel()
         defer { withExtendedLifetime(model) {} }
         let data = model.data
+        data.connect()
         #expect(await eventually { model.source.requests.count == 1 })
         model.source.requests[0].producer.yield(.success(41))
         model.source.requests[0].producer.finish()
@@ -84,7 +87,7 @@ struct SourceRebindingTests {
     func callbackReads() async {
         let model = RebindingModel()
         defer { withExtendedLifetime(model) {} }
-        _ = model.data
+        model.data.connect()
         #expect(await eventually { model.source.requests.count == 1 })
         await model.data.reload()
         model.source.requests[0].producer.yield(.success(41))
@@ -100,7 +103,7 @@ struct SourceRebindingTests {
     func conditionalInputs() async throws {
         let model = RebindingModel()
         defer { withExtendedLifetime(model) {} }
-        _ = model.data
+        model.data.connect()
         try #require(await eventually { model.source.requests.count == 1 })
         model.alternateQuery = 20
         for _ in 0..<10 { await Task.yield() }
@@ -115,11 +118,35 @@ struct SourceRebindingTests {
         #expect(model.source.requests.map(\.query) == [0, 20, 21])
     }
 
+    @Test("Equal composite IDs renew conditional dependencies without replacing sinks")
+    func equalConditionalIdentity() async throws {
+        let model = RebindingModel()
+        defer { withExtendedLifetime(model) {} }
+        model.alternateQuery = 0
+        let data = model.data
+        data.connect()
+        try #require(await eventually { model.source.requests.count == 1 })
+        model.source.requests[0].producer.yield(.success(41))
+        try #require(await eventually { data.latestValue == .available(41) })
+        let sink = try #require(model.lastSink)
+        model.usesAlternate = true
+        sink.receive(Result<Int, Never>.success(42))
+        #expect(data.latestValue == .available(42))
+        model.query = 99
+        for _ in 0..<10 { await Task.yield() }
+        #expect(model.source.requests.count == 1)
+        model.alternateQuery = 7
+        sink.reset()
+        #expect(data.latestValue == .available(42))
+        try #require(await eventually { model.source.requests.count == 2 })
+        #expect(model.source.requests.map(\.query) == [0, 7])
+    }
+
     @Test("An immediate reload observes the new inputs before requesting a hot refresh")
     func reloadAfterInputChange() async throws {
         let model = RebindingModel()
         defer { withExtendedLifetime(model) {} }
-        _ = model.data
+        model.data.connect()
         try #require(await eventually { model.source.requests.count == 1 })
         model.query = 4
         await model.data.reload()
@@ -136,6 +163,7 @@ struct SourceRebindingTests {
         weak let weakModel = model
         let source = model!.source
         let data = model!.data
+        data.connect()
         try #require(await eventually { source.requests.count == 1 })
         model!.query = 1
         model = nil
@@ -147,11 +175,12 @@ struct SourceRebindingTests {
         #expect(data.retryAction == nil)
     }
 
-    @Test("Reload-disabled sources still activate and rebind their inputs")
+    @Test("Reload-disabled sources still connect and rebind their identity")
     func disabledReload() async throws {
         let model = RebindingModel()
         defer { withExtendedLifetime(model) {} }
         let data = model.passive
+        data.connect()
         try #require(await eventually { model.source.requests.count == 1 })
         #expect(data.retryAction == nil)
         await data.reload()
@@ -183,9 +212,15 @@ private final class RebindingModel {
     @ObservationIgnored var lastSink: ViewDataSink<Int>?
     @ObservationIgnored var receivedValues: [Int] = []
 
+    struct ConnectionID: Equatable {
+        let source: ObjectIdentifier
+        let query: Int
+    }
     var selectedQuery: Int { usesAlternate ? alternateQuery : query }
+    var connectionID: ConnectionID { ConnectionID(source: ObjectIdentifier(source), query: selectedQuery) }
 
     @ViewDataSource(
+        id: \.connectionID,
         initial: { (model: Self) in .available(model.seedInput) },
         make: { (model: Self) in model.source.values(for: model.selectedQuery) },
         refresh: { model in
@@ -203,6 +238,7 @@ private final class RebindingModel {
     var data: ViewData<Int>
 
     @ViewDataSource(
+        id: \.connectionID,
         make: { (model: Self) in model.source.values(for: model.selectedQuery) },
         allowsReload: false
     )

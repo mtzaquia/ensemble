@@ -33,7 +33,9 @@ struct EnsembleReloadTests {
         let textFixture = SourceFixture<String, _>(make: strings.values)
         defer { withExtendedLifetime((numberFixture, textFixture)) {} }
         let number = numberFixture.data
+        number.connect()
         let text = textFixture.data
+        text.connect()
         let batch = Task { await Ensemble.reload(number, text) }
         #expect(await eventually { integers.producers.count == 1 && strings.producers.count == 1 })
         integers.producers[0].yield(.success(42))
@@ -54,12 +56,15 @@ struct EnsembleReloadTests {
         let failedDataFixture = SourceFixture(.available(7), make: failure.values)
         defer { withExtendedLifetime(failedDataFixture) {} }
         let failedData = failedDataFixture.data
+        failedData.connect()
         let textFixture = SourceFixture<String, _>(make: success.values)
         defer { withExtendedLifetime(textFixture) {} }
         let text = textFixture.data
+        text.connect()
         let listFixture = SourceFixture<[Int], _>(make: empty.values)
         defer { withExtendedLifetime(listFixture) {} }
         let list = listFixture.data
+        list.connect()
         var returned = false
         let batch = Task {
             await Ensemble.reload(failedData, text, list)
@@ -92,9 +97,11 @@ struct EnsembleReloadTests {
         let numberFixture = SourceFixture(.available(7), make: first.values, refresh: first.refresh)
         defer { withExtendedLifetime(numberFixture) {} }
         let number = numberFixture.data
+        number.connect()
         let textFixture = SourceFixture(.available("Cached"), make: second.values, refresh: second.refresh)
         defer { withExtendedLifetime(textFixture) {} }
         let text = textFixture.data
+        text.connect()
         var returned = false
         let batch = Task { await Ensemble.reload(number, text); returned = true }
         #expect(await eventually { first.requests.count == 1 && second.requests.count == 1 })
@@ -119,6 +126,7 @@ struct EnsembleReloadTests {
         let dataFixture = SourceFixture<Int, _>(make: { stream }, refresh: { producer.yield(.success(42)) })
         defer { withExtendedLifetime(dataFixture) {} }
         let data = dataFixture.data
+        data.connect()
         await Ensemble.reload(data)
         #expect(await eventually { data.latestValue == .available(42) })
     }
@@ -129,6 +137,7 @@ struct EnsembleReloadTests {
         let dataFixture = SourceFixture(.available(7), make: source.values)
         defer { withExtendedLifetime(dataFixture) {} }
         let data = dataFixture.data
+        data.connect()
         #expect(await eventually { source.producers.count == 1 })
         source.producers[0].yield(.success(8))
         #expect(await eventually { data.latestValue == .available(8) })
@@ -155,9 +164,11 @@ struct EnsembleReloadTests {
         let numberFixture = SourceFixture(.available(7), make: hot.values, refresh: hot.refresh)
         defer { withExtendedLifetime(numberFixture) {} }
         let number = numberFixture.data
+        number.connect()
         let textFixture = SourceFixture(.available("Cached"), make: cold.values)
         defer { withExtendedLifetime(textFixture) {} }
         let text = textFixture.data
+        text.connect()
         #expect(await eventually { hot.connections == 1 })
         let batch = Task { await Ensemble.reload(number, text) }
         #expect(await eventually { hot.requests.count == 1 && cold.producers.count == 1 })
@@ -182,6 +193,7 @@ struct EnsembleReloadTests {
         let dataFixture = SourceFixture(.available(7), make: source.values, refresh: source.refresh)
         defer { withExtendedLifetime(dataFixture) {} }
         let data = dataFixture.data
+        data.connect()
         let first = Task { await firstCall.run(data) }
         #expect(await eventually { source.requests.count == 1 })
         var secondReturned = false
@@ -206,6 +218,7 @@ struct EnsembleReloadTests {
         let dataFixture = SourceFixture(.available(7), make: source.values)
         defer { withExtendedLifetime(dataFixture) {} }
         let data = dataFixture.data
+        data.connect()
         try #require(await eventually { source.producers.count == 1 })
         source.producers[0].yield(.success(7))
         source.producers[0].finish()
@@ -288,6 +301,7 @@ struct EnsembleReloadTests {
         }, allowsReload: false, receive: { _, result, sink in sink.receive(result) })
         defer { withExtendedLifetime(fixture) {} }
         let data = fixture.data
+        data.connect()
         let passive = ViewData(.available(7))
         #expect(await eventually { connections == 1 })
         await call.run(data)
@@ -308,6 +322,7 @@ struct EnsembleReloadTests {
         }, refresh: { refreshes += 1 })
         defer { withExtendedLifetime(dataFixture) {} }
         let data = dataFixture.data
+        data.connect()
         let passive = ViewData(.available("Passive"))
         let disabledFixture = SourceFixture<Int, _>(make: {
             disabledConnections += 1
@@ -315,6 +330,7 @@ struct EnsembleReloadTests {
         }, allowsReload: false, receive: { _, result, sink in sink.receive(result) })
         defer { withExtendedLifetime(disabledFixture) {} }
         let disabled = disabledFixture.data
+        disabled.connect()
         await Ensemble.reload(data, passive, data, disabled)
         #expect(refreshes == 1 && connections == 1)
         #expect(disabledConnections == 1)
@@ -335,6 +351,7 @@ struct EnsembleReloadTests {
             })
             defer { withExtendedLifetime(dataFixture) {} }
             let data = dataFixture.data
+            data.connect()
             weakData = data
             weakBinding = data.binding
             await Ensemble.reload(data)
@@ -344,7 +361,7 @@ struct EnsembleReloadTests {
         #expect(weakBinding == nil)
     }
 
-    @Test("Cancelled reload starts no refresh; first access still activates the source", arguments: ReloadCall.allCases)
+    @Test("Cancelled reload and passive reads start no source work", arguments: ReloadCall.allCases)
     func alreadyCancelled(_ call: ReloadCall) async {
         var connections = 0
         var refreshes = 0
@@ -358,7 +375,7 @@ struct EnsembleReloadTests {
         batch.cancel()
         await batch.value
         #expect(refreshes == 0)
-        #expect(await eventually { connections == 1 })
+        #expect(connections == 0)
     }
 
     private func eventually(_ predicate: () -> Bool) async -> Bool {

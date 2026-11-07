@@ -71,6 +71,8 @@ struct SourceLifecycleExample: View {
                     showsMacro.toggle()
                 }
                     .accessibilityIdentifier("sample.source-lifecycle.show-macro")
+                Button("Connect macro source", action: macroModel.start)
+                    .accessibilityIdentifier("sample.source-lifecycle.connect-macro")
                 Text("Macro connections: \(macroModel.useCase.connections)")
                     .accessibilityIdentifier("sample.source-lifecycle.connections")
                 if showsMacro {
@@ -99,7 +101,7 @@ struct SourceLifecycleExample: View {
             } header: {
                 Text("Property macro")
             } footer: {
-                Text("Read the badge or show the data gate to activate the source. Hidden content keeps its connection while the model lives. Release the model to cancel it.")
+                Text("Badge and gate reads stay passive. Choose Connect macro source to start updates without requesting a refresh. Hidden content keeps its connection while the model lives. Release the model to cancel it.")
             }
         }
         .navigationTitle("Source lifecycle")
@@ -110,6 +112,7 @@ struct SourceLifecycleExample: View {
 @Observable
 private final class SourceLifecycleModel {
     @ViewDataSource(
+        id: \.isSecond,
         initial: { _ in .available(SampleEntry.cached) },
         make: { (model: Self) in model.currentSource.values() },
         refresh: { model in model.currentSource.reload() }
@@ -142,6 +145,8 @@ private final class MacroSourceModel {
     }
 
     var canShowEntries: Bool { badgeCount > 0 }
+
+    func start() { entries.connect() }
 
     @ViewDataSource(
         make: { (model: Self) in model.useCase.values() },

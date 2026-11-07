@@ -144,6 +144,22 @@ public struct ViewDataSourceMacro: AccessorMacro, PeerMacro {
 
     private static func validateCallbacks(_ node: AttributeSyntax) throws {
         guard case .argumentList(let arguments) = node.arguments else { return }
+        if let identity = arguments.first(where: { $0.label?.text == "id" }) {
+            guard identity.expression.is(KeyPathExprSyntax.self) else {
+                throw DiagnosticsError(diagnostics: [Diagnostic(
+                    node: Syntax(identity.expression),
+                    message: SourceDiagnostic(message: "@ViewDataSource id must be a key-path literal")
+                )])
+            }
+            let visitor = InstanceCaptureVisitor(viewMode: .sourceAccurate)
+            visitor.walk(identity.expression)
+            if let reference = visitor.reference {
+                throw DiagnosticsError(diagnostics: [Diagnostic(
+                    node: reference,
+                    message: SourceDiagnostic(message: "@ViewDataSource id must not capture instance self or super")
+                )])
+            }
+        }
         for argument in arguments where ["initial", "make", "refresh", "receive"].contains(argument.label?.text) {
             if argument.label?.text != "make", argument.expression.is(NilLiteralExprSyntax.self) { continue }
             guard let closure = argument.expression.as(ClosureExprSyntax.self) else {
@@ -190,12 +206,19 @@ public struct ViewDataSourceMacro: AccessorMacro, PeerMacro {
         let receive = args["receive"].flatMap { $0 == "nil" ? nil : $0 }
             ?? "{ _, result, sink in sink.receive(result) }"
         let data = context.makeUniqueName("data")
+        let identity: String
+        if let id = args["id"] {
+            identity = "{ $0[keyPath: \(id)] }"
+        } else {
+            identity = "{ _ in false }"
+        }
         return [
             """
             get {
                 let \(data) = \(raw: type)._source(
                     _\(raw: name),
                     owner: self,
+                    id: \(raw: identity),
                     initial: \(raw: args["initial"] ?? "nil"),
                     make: \(raw: make),
                     refresh: \(raw: args["refresh"] ?? "nil"),

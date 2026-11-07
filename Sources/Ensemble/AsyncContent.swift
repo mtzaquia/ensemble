@@ -162,6 +162,13 @@ private enum AsyncContentData<Value> {
         }
     }
 
+    func connect() {
+        switch self {
+        case .value(let data): data.connect()
+        case .optionalValue(let data): data.connect()
+        }
+    }
+
     func presentation(
         loadingPolicy: AsyncContentLoadingPolicy<Value>,
         failureRendering: AsyncContentFailureRendering
@@ -217,9 +224,9 @@ struct AsyncContentPresentation<Value> {
 /// becoming visible on success. It does not configure a SwiftUI transition modifier. Insertion or
 /// removal of the entire `AsyncContent` by an ancestor uses that ancestor's transaction.
 ///
-/// Source-backed data activates on first access to its model's `@ViewDataSource` property and
-/// stays connected for that model's lifetime. Showing or hiding `AsyncContent` only changes
-/// presentation. Ordinary data still needs an explicit load.
+/// Rendering source-backed data requests its connection, even when the initial presentation is
+/// hidden. Source startup is scheduled outside view rendering and remains owned by the model;
+/// hiding or removing `AsyncContent` does not disconnect it. Ordinary data needs an explicit load.
 public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
     private let data: AsyncContentData<Value>
     private let loadingPolicy: AsyncContentLoadingPolicy<Value>
@@ -231,6 +238,7 @@ public struct AsyncContent<Value, Content: View, FailureContent: View>: View {
 
     @ViewBuilder
     public var body: some View {
+        let _ = data.connect()
         let observation = observation
         let _ = observation.bind(to: data.presentationSource, animation: configuredPhaseAnimation)
         let _ = observation.revision

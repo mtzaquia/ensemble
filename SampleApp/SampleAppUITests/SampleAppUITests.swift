@@ -47,12 +47,14 @@ nonisolated final class SampleAppUITests: XCTestCase {
         reload.tap()
         scrollUntilHittable(element("sample.source-lifecycle.origin"), direction: .down)
         XCTAssertTrue(waitForLabelContaining("Retained", on: element("sample.source-lifecycle.origin")))
+        scrollUntilHittable(element(A11y.entry(10)), direction: .down)
         XCTAssertTrue(element(A11y.entry(10)).exists, app.debugDescription)
         XCTAssertFalse(element(A11y.entry(0)).exists)
 
         let deliver = app.buttons["sample.source-lifecycle.deliver"]
         scrollUntilHittable(deliver, direction: .up)
         deliver.tap()
+        scrollUntilHittable(element(A11y.entry(20)), direction: .down)
         XCTAssertTrue(element(A11y.entry(20)).waitForExistence(timeout: 3))
 
         let showMacro = app.buttons["sample.source-lifecycle.show-macro"]
@@ -63,10 +65,15 @@ nonisolated final class SampleAppUITests: XCTestCase {
         readBadge.tap()
         XCTAssertTrue(waitForLabelContaining("0", on: element("sample.source-lifecycle.badge")))
         let connections = element("sample.source-lifecycle.connections")
-        XCTAssertTrue(waitForLabelContaining("1", on: connections))
+        XCTAssertTrue(waitForLabelContaining("0", on: connections))
         scrollUntilHittable(showMacro, direction: .up)
         showMacro.tap()
         XCTAssertTrue(element("sample.source-lifecycle.gate").waitForExistence(timeout: 3))
+        XCTAssertTrue(waitForLabelContaining("0", on: connections))
+        let connectMacro = app.buttons["sample.source-lifecycle.connect-macro"]
+        scrollUntilHittable(connectMacro, direction: .up)
+        connectMacro.tap()
+        XCTAssertTrue(waitForLabelContaining("1", on: connections))
         let deliverMacro = app.buttons["sample.source-lifecycle.deliver-macro"]
         scrollUntilHittable(deliverMacro, direction: .up)
         deliverMacro.tap()
@@ -78,6 +85,7 @@ nonisolated final class SampleAppUITests: XCTestCase {
         scrollUntilHittable(releaseModel, direction: .up)
         releaseModel.tap()
         XCTAssertTrue(waitForLabelContaining("0", on: element("sample.source-lifecycle.previous-connections")))
+        XCTAssertTrue(waitForLabelContaining("0", on: connections))
     }
 
     @MainActor

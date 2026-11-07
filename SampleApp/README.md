@@ -4,10 +4,10 @@ The sample app is a UI/platform showcase for `ViewData` and `AsyncContent`. Each
 keeps its state local, uses deterministic fixtures, and places the explanation beside the behavior
 it demonstrates.
 
-All stream-backed models declare their sources with `@ViewDataSource`. First property access
-activates a connection for the model’s lifetime. `AsyncContent` renders its state, and models reload
+All stream-backed models declare their sources with `@ViewDataSource`. Property reads are passive;
+`AsyncContent` requests a connection for the model’s lifetime. Other consumers use `connect()`. Models reload
 directly through their data properties. One-shot examples use
-`await entries.load(...)`; no separate context or binding-start method is required. Reload is async:
+`await entries.load(...)`. Reload is async:
 Screen replacement's pull-to-refresh awaits the new cold request, and custom async refresh actions
 can await producer work directly.
 
@@ -26,9 +26,9 @@ for manual inspection of transitions.
 ## Source lifecycle
 
 Launch `UI_TESTING --scenario=source-lifecycle` or select **Source lifecycle** from the catalog.
-Both models declare their sources with `@ViewDataSource`. The selected source is an observable
-model input; changing it automatically rebinds the subscription. No context, lifecycle method,
-model-level macro, projected value, or replacement call is needed.
+Both models declare their sources with `@ViewDataSource`. The selected source uses `id: \.isSecond`;
+changing that observable identity automatically rebinds the subscription. Source construction is
+untracked. The badge and conditional gate demonstrate explicit model startup without rendering.
 
 1. The first source exposes cached rows immediately.
 2. Choose **Swap source**. The model keeps its successful value in the same instance, and the
@@ -36,19 +36,19 @@ model-level macro, projected value, or replacement call is needed.
    Choose **Reload** to enter loading with a Retained badge instead of placeholders.
 3. Choose **Fail response** to retain those rows through failure, then **Reload** and
    **Deliver response** to recover with the new source's rows.
-4. Choose **Read badge**. The unseeded badge reads zero and activates the source before any
-   `AsyncContent` exists. Its connection count becomes one.
-5. Choose **Show macro source**. The data gate waits for a response. **Deliver macro response**
-   opens it and updates the badge to three. Reading the gate alone also activates the source.
+4. Choose **Read badge**. The unseeded badge reads zero and the connection count stays zero.
+5. Choose **Show macro source**. The data gate waits for a response and stays passive too.
+   Choose **Connect macro source** to call the model's synchronous `start()` method. Its connection
+   count becomes one without a refresh. **Deliver macro response** opens the gate and updates the badge to three.
 6. Hide the consumer. The connection count stays one because the model still lives.
 7. Choose **Release macro model**. The previous source’s active connection count reaches zero,
-   and the replacement model stays dormant until its first property read.
+   and the replacement model stays dormant until connected.
 
 | Promise | Evidence | Primary proof |
 | --- | --- | --- |
 | Seeds are synchronous; factories are lazy | Cached rows before connection; macro count starts at zero | Package tests and sample UI test |
-| A badge or closed data gate activates its source | Badge updates before content exists; the gate later opens | Package, hosted SwiftUI, and sample UI tests |
-| Observed source changes retain real model data | Old rows remain available in the model throughout the request | Package, hosted List, and sample UI tests |
+| Reads stay passive; explicit startup supports badges and closed gates | Zero connections until Connect; badge updates and gate opens afterward | Package, hosted SwiftUI, and sample UI tests |
+| Identity changes retain real model data | Old rows remain available in the model throughout the request | Package, hosted List, and sample UI tests |
 | Hidden consumers keep the model-owned source | Hide and restore content without creating another connection | Package, hosted SwiftUI, and sample UI tests |
 | Owner release cancels even when data is retained | Previous active connections reach zero after releasing the model | Package and sample UI tests |
 

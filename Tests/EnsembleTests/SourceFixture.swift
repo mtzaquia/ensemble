@@ -33,11 +33,10 @@ final class SourceFixture<Value, Source: AsyncSequence> {
     private let allowsReload: Bool
     private let adapter: @MainActor (SourceFixture<Value, Source>, Source.Element, ViewDataSink<Value>) -> Void
 
+    var sourceID: Int { inputs.revision }
+
     var factory: @MainActor () -> Source {
-        get {
-            _ = inputs.revision
-            return makeSource
-        }
+        get { makeSource }
         set {
             makeSource = newValue
             inputs.revision += 1
@@ -45,6 +44,7 @@ final class SourceFixture<Value, Source: AsyncSequence> {
     }
 
     @ViewDataSource(
+        id: \.sourceID,
         initial: { (model: Self) in model.initial },
         make: { model in model.factory() },
         receive: { model, element, sink in model.adapter(model, element, sink) }
@@ -52,6 +52,7 @@ final class SourceFixture<Value, Source: AsyncSequence> {
     private var cold: ViewData<Value>
 
     @ViewDataSource(
+        id: \.sourceID,
         initial: { (model: Self) in model.initial },
         make: { model in model.factory() },
         refresh: { model in await model.refreshAction?() },
@@ -60,6 +61,7 @@ final class SourceFixture<Value, Source: AsyncSequence> {
     private var hot: ViewData<Value>
 
     @ViewDataSource(
+        id: \.sourceID,
         initial: { (model: Self) in model.initial },
         make: { model in model.factory() },
         allowsReload: false,

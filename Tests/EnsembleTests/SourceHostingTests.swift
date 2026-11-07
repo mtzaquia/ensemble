@@ -30,8 +30,25 @@ import AppKit
 
 @Suite("Hosted model-owned sources", .serialized)
 struct SourceHostingTests {
-    @Test("A conditional gate activates before AsyncContent exists")
+    @Test("An initially hidden AsyncContent requests its source connection")
     func hiddenSourceStarts() async throws {
+        let useCase = HostedSource()
+        useCase.valueOnSubscription = 42
+        let model = HostedModel(useCase: useCase, initial: .unavailable)
+        defer { withExtendedLifetime(model) {} }
+        let probe = HandoffProbe()
+        let host = NSHostingView(rootView: AsyncContent(model.data) { value, source in
+            HandoffMarker(value: value, source: source, probe: probe)
+        })
+        host.frame = NSRect(x: 0, y: 0, width: 300, height: 300)
+        try await render(host) { probe.lastSample == "42-latest" }
+        #expect(useCase.connections == 1)
+        #expect(model.data.latestValue == .available(42))
+        #expect(useCase.refreshes == 0)
+    }
+
+    @Test("A conditional gate stays passive until the model connects its source")
+    func gateConnectsExplicitly() async throws {
         let useCase = HostedSource()
         useCase.valueOnSubscription = 42
         let model = HostedModel(useCase: useCase, initial: .unavailable)
@@ -39,9 +56,12 @@ struct SourceHostingTests {
         let probe = HandoffProbe()
         let host = NSHostingView(rootView: GatedSourceContent(model: model, probe: probe))
         host.frame = NSRect(x: 0, y: 0, width: 300, height: 300)
+        for _ in 0..<10 { host.layoutSubtreeIfNeeded(); await Task.yield() }
+        #expect(useCase.connections == 0)
+        #expect(probe.lastSample == nil)
+        model.start()
         try await render(host) { probe.lastSample == "42-latest" }
         #expect(useCase.connections == 1)
-        #expect(model.data.latestValue == .available(42))
         #expect(useCase.refreshes == 0)
     }
 
@@ -129,14 +149,17 @@ private enum HostedError: Error { case failed }
 
 @Observable
 private final class HostedModel {
+    var sourceID: ObjectIdentifier { ObjectIdentifier(useCase) }
     var useCase: HostedSource
     let initial: ViewDataAvailability<Int>
     var showsContent = true
+    func start() { Ensemble.connect(data) }
     var hasContent: Bool {
         if case .available = data.latestValue { true } else { false }
     }
 
     @ViewDataSource(
+        id: \.sourceID,
         initial: { (model: Self) in model.initial },
         make: { (model: Self) in model.useCase.values() },
         refresh: { model in model.useCase.reload() }

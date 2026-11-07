@@ -27,37 +27,43 @@ import Testing
 
 @Suite("Model-owned source lifetime")
 struct ViewDataSourceTests {
-    @Test("First access seeds synchronously and schedules one activation")
+    @Test("Reads seed synchronously and stay passive until connection is requested")
     func lazyConstruction() async {
         let useCase = SourceUseCase()
         let model = SourceModel(useCase: useCase, initial: .available(41))
         defer { withExtendedLifetime(model) {} }
-        for _ in 0..<10 { await Task.yield() }
-        #expect(useCase.connections == 0)
         let data = model.value
         #expect(model.value === data)
         #expect(data.latestValue == .available(41))
         #expect(data.phase.kind == .success)
-        #expect(useCase.connections == 0)
         let content = AsyncContent(data, loading: .placeholder(0)) { value, _ in Text("\(value)") }
         guard case .content(41, .latest) = content.rendering else {
             Issue.record("The first presentation must use the seed")
             return
         }
+        for _ in 0..<10 { await Task.yield() }
+        #expect(useCase.connections == 0)
+        data.connect()
+        #expect(useCase.connections == 0)
         #expect(await eventually { useCase.connections == 1 })
         #expect(useCase.refreshes == 0)
         #expect(data.phase.kind == .success)
     }
 
-    @Test("Repeated reads and multiple consumers reuse the model's source")
+    @Test("Repeated single and batch connection requests share the model's source")
     func sharedConnection() async {
         let useCase = SourceUseCase()
         let model = SourceModel(useCase: useCase)
         defer { withExtendedLifetime(model) {} }
         let data = model.value
+        data.connect()
+        Ensemble.connect(data, data)
+        #expect(useCase.connections == 0)
         #expect(await eventually { useCase.connections == 1 })
         for _ in 0..<10 {
             #expect(model.value === data)
+            data.connect()
+            Ensemble.connect(data)
             _ = AsyncContent(data) { value, _ in Text("\(value)") }
             await Task.yield()
         }
@@ -65,30 +71,48 @@ struct ViewDataSourceTests {
         #expect(await eventually { data.latestValue == .available(42) })
         #expect(useCase.connections == 1)
         #expect(useCase.refreshes == 0)
+        Ensemble.connect()
     }
 
-    @Test("Badge and conditional-gate reads activate without AsyncContent")
+    @Test("Badge and conditional-gate reads stay passive; model startup connects them")
     func derivedReads() async {
         let useCase = SourceUseCase()
         let model = SourceModel(useCase: useCase)
         defer { withExtendedLifetime(model) {} }
         #expect(model.badgeCount == 0)
         #expect(!model.canShowContent)
+        for _ in 0..<10 { await Task.yield() }
+        #expect(useCase.connections == 0)
+        model.start()
         #expect(await eventually { useCase.connections == 1 })
         useCase.continuations[0].yield(.success(42))
         #expect(await eventually { model.badgeCount == 42 && model.canShowContent })
     }
 
-    @Test("Each declaration activates independently on its own first access")
+    @Test("Injected presentation and assertions do not start domain sources")
+    func injectedPresentationStaysPassive() async {
+        let useCase = SourceUseCase()
+        let model = SourceModel(useCase: useCase)
+        defer { withExtendedLifetime(model) {} }
+        await model.value.load { 99 }
+        #expect(model.value.latestValue == .available(99))
+        #expect(model.value.phase.kind == .success)
+        for _ in 0..<10 { await Task.yield() }
+        #expect(useCase.connections == 0)
+        #expect(useCase.refreshes == 0)
+    }
+
+    @Test("Batch connection starts heterogeneous sources without hot refreshes")
     func declaredSeeds() async {
         let useCase = SourceUseCase()
         let model = SourceModel(useCase: useCase)
         defer { withExtendedLifetime(model) {} }
         #expect(model.seeded.latestValue == .available(7))
-        #expect(await eventually { useCase.connections == 1 })
-        #expect(useCase.refreshes == 0)
         #expect(model.empty.latestValue == .unavailable)
+        Ensemble.connect(model.seeded, model.empty, ViewData(.available("Passive")))
+        #expect(useCase.connections == 0)
         #expect(await eventually { useCase.connections == 2 })
+        #expect(useCase.refreshes == 0)
         #expect(model.empty.phase.kind == .empty)
     }
 
@@ -99,6 +123,7 @@ struct ViewDataSourceTests {
         let model = SourceModel(useCase: useCase)
         defer { withExtendedLifetime(model) {} }
         let data = model.value
+        data.connect()
         #expect(await eventually { data.latestValue == .available(42) })
         #expect(useCase.refreshes == 0)
     }
@@ -110,6 +135,7 @@ struct ViewDataSourceTests {
         let model = SourceModel(useCase: original)
         defer { withExtendedLifetime(model) {} }
         let data = model.seeded
+        data.connect()
         #expect(await eventually { original.connections == 1 })
         await data.reload()
         #expect(await eventually { data.latestValue == .available(1) })
@@ -138,6 +164,7 @@ struct ViewDataSourceTests {
         for _ in 0..<10 { await Task.yield() }
         #expect(original.connections == 0 && replacement.connections == 0)
         let data = model.value
+        data.connect()
         #expect(await eventually { replacement.connections == 1 })
         data.reset()
         #expect(data.latestValue == .unavailable)
@@ -146,12 +173,13 @@ struct ViewDataSourceTests {
         #expect(replacement.refreshes == 0)
     }
 
-    @Test("Releasing the owner before scheduled activation starts no work")
+    @Test("Releasing the owner cancels a scheduled connection request")
     func releasedBeforeActivation() async {
         let useCase = SourceUseCase()
         var model: SourceModel? = SourceModel(useCase: useCase, initial: .available(41))
         weak let weakModel = model
         let data = model!.value
+        data.connect()
         model = nil
         #expect(weakModel == nil)
         await data.reload()
@@ -168,6 +196,7 @@ struct ViewDataSourceTests {
         var model: SourceModel? = SourceModel(useCase: useCase, initial: .available(41))
         weak let weakModel = model
         let data = model!.value
+        data.connect()
         #expect(await eventually { useCase.connections == 1 })
         model = nil
         #expect(weakModel == nil)
@@ -189,8 +218,13 @@ struct ViewDataSourceTests {
         let model = ColdSourceModel()
         defer { withExtendedLifetime(model) {} }
         let data = model.value
+        data.connect()
         #expect(await eventually { data.latestValue == .available(1) && data.binding?.isRunning == false })
-        for _ in 0..<10 { _ = model.value; await Task.yield() }
+        for _ in 0..<10 {
+            _ = model.value
+            data.connect()
+            await Task.yield()
+        }
         #expect(model.requests == 1)
         await data.reload()
         #expect(model.requests == 2)
@@ -211,6 +245,7 @@ struct ViewDataSourceTests {
         let model = GenericSourceModel<Int>()
         defer { withExtendedLifetime(model) {} }
         let data = model.value
+        data.connect()
         #expect(await eventually { data.latestValue == .available(1) })
     }
 
@@ -234,15 +269,18 @@ private enum SourceFailure: Error { case offline }
 
 @Observable
 private final class SourceModel {
+    var sourceID: ObjectIdentifier { ObjectIdentifier(useCase) }
     var useCase: SourceUseCase
 
     var badgeCount: Int {
         if case .available(let count) = value.latestValue { count } else { 0 }
     }
     var canShowContent: Bool { badgeCount > 0 }
+    func start() { Ensemble.connect(value) }
     let initial: ViewDataAvailability<Int>
 
     @ViewDataSource(
+        id: \.sourceID,
         initial: { (model: Self) in model.initial },
         make: { (model: Self) in model.useCase.values() },
         refresh: { model in model.useCase.reload() }
@@ -251,6 +289,7 @@ private final class SourceModel {
     var value: ViewData<Int>
 
     @ViewDataSource(
+        id: \.sourceID,
         initial: { _ in .available(7) },
         make: { (model: Self) in model.useCase.values() },
         refresh: { (model: Self) in model.useCase.reload() }
@@ -259,6 +298,7 @@ private final class SourceModel {
     var seeded: ViewData<Int>
 
     @ViewDataSource(
+        id: \.sourceID,
         make: { (model: Self) in model.useCase.values() },
         refresh: { model in model.useCase.reload() }
     )

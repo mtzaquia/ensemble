@@ -33,7 +33,7 @@ struct ViewDataReceiveTests {
         defer { withExtendedLifetime(model) {} }
         #expect(model.data.latestValue == .available(7))
         #expect(source.connections == 0)
-        _ = model.data
+        model.data.connect()
         #expect(await eventually { source.connections == 1 })
         #expect(source.requests.isEmpty)
         source.emit(.result(.failure(.offline)))
@@ -52,6 +52,7 @@ struct ViewDataReceiveTests {
         weak var weakModel: AdaptedModel?
         weakModel = model
         let data = model!.data
+        data.connect()
         #expect(await eventually { source.connections == 1 })
         model = nil
         #expect(weakModel == nil)
@@ -72,6 +73,7 @@ struct ViewDataReceiveTests {
         }
         defer { withExtendedLifetime(dataFixture) {} }
         let data = dataFixture.data
+        data.connect()
         #expect(await eventually { source.connections == 1 })
         source.emit(.result(.success(10)))
         #expect(await eventually { data.latestValue == .available(10) })
@@ -96,6 +98,7 @@ struct ViewDataReceiveTests {
         })
         defer { withExtendedLifetime(dataFixture) {} }
         let data = dataFixture.data
+        data.connect()
         producer.yield(.success(21))
         #expect(await eventually { data.latestValue == .available(42) })
     }
@@ -105,7 +108,7 @@ struct ViewDataReceiveTests {
         let source = AdaptedSource()
         let model = AdaptedModel(source: source)
         defer { withExtendedLifetime(model) {} }
-        _ = model.data
+        model.data.connect()
         #expect(await eventually { source.connections == 1 })
         var returned = false
         let reload = Task {
@@ -128,6 +131,7 @@ struct ViewDataReceiveTests {
         let dataFixture = SourceFixture<Int, _>(.available(7), make: source.values, refresh: source.reload, receive: { _, update, sink in apply(update, sink) })
         defer { withExtendedLifetime(dataFixture) {} }
         let data = dataFixture.data
+        data.connect()
         #expect(await eventually { source.connections == 1 })
         let reload = Task { await data.reload() }
         #expect(await eventually { source.requests.count == 1 })
@@ -148,6 +152,7 @@ struct ViewDataReceiveTests {
         })
         defer { withExtendedLifetime(dataFixture) {} }
         let data = dataFixture.data
+        data.connect()
         #expect(await eventually { producers.count == 1 })
         producers[0].yield(.success(7))
         #expect(await eventually { data.latestValue == .available(7) })

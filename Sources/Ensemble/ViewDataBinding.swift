@@ -24,7 +24,7 @@ import Observation
 import os
 
 // The macro's owner-held storage controls this binding's lifetime. Connection revisions and
-// factory-input tracking reject obsolete producers, sinks, and retries independently of views.
+// identity tracking reject obsolete producers, sinks, and retries independently of views.
 final class ViewDataBinding<Value> {
     private typealias Connect = @MainActor (ViewDataBinding, UInt) -> Bool
 
@@ -43,7 +43,8 @@ final class ViewDataBinding<Value> {
         }
     }
 
-    private let connect: Connect
+    private let makeConnection: Connect
+    private let observeIdentity: @MainActor (@escaping @Sendable () -> Void) -> Bool?
     private let reloadBehavior: ReloadBehavior
     private weak var destination: ViewData<Value>?
     private var activationTask: Task<Void, Never>?
@@ -55,18 +56,30 @@ final class ViewDataBinding<Value> {
     private var revision: UInt = 0
     private(set) var isConnected = false
     private var loadingToken: UInt?
-    private var sourceObservation: SourceObservation?
+    private var identityObservation: SourceValidity?
+    private var connectionValidity: SourceValidity?
+    private var needsRebind = false
 
     var isRunning: Bool { task != nil }
 
-    init<Owner: AnyObject, Source: AsyncSequence>(
+    init<Owner: AnyObject, ID: Equatable, Source: AsyncSequence>(
         destination: ViewData<Value>,
         owner: Owner,
+        id: @escaping @MainActor (Owner) -> ID,
         make: @escaping @MainActor (Owner) -> Source,
         refresh: (@MainActor (Owner) async -> Void)?,
         allowsReload: Bool,
         receive: @escaping @MainActor (Owner, Source.Element, ViewDataSink<Value>) -> Void
     ) {
+        var previousIdentity: ID?
+        self.observeIdentity = { [weak owner] onChange in
+            guard let owner else { return nil }
+            let identity = withObservationTracking({ id(owner) }, onChange: onChange)
+            // Equality can itself read observable properties; keep it outside the tracked scope.
+            let changed = previousIdentity.map { $0 != identity } ?? true
+            previousIdentity = .some(identity)
+            return changed
+        }
         if !allowsReload {
             self.reloadBehavior = .disabled
         } else if let refresh {
@@ -77,11 +90,15 @@ final class ViewDataBinding<Value> {
         } else {
             self.reloadBehavior = .resubscribe
         }
-        self.connect = Self.connection(make: { [weak owner] in owner.map(make) }) { [weak owner] element, sink in
+        self.makeConnection = Self.connection(make: { [weak owner] in owner.map(make) }) { [weak owner] element, sink in
             guard let owner else { return }
             receive(owner, element, sink)
         }
         self.destination = destination
+    }
+
+    func connect() {
+        guard isActive, !isConnected, activationTask == nil else { return }
         activationTask = Task { [weak self] in
             guard let self, !Task.isCancelled else { return }
             self.activationTask = nil
@@ -93,6 +110,8 @@ final class ViewDataBinding<Value> {
         activationTask?.cancel()
         activationTask = nil
         guard isActive, !isConnected else { return }
+        updateIdentityIfNeeded()
+        guard isActive else { return }
         start()
         canJoinInitialLoad = task != nil
     }
@@ -102,12 +121,13 @@ final class ViewDataBinding<Value> {
         if case .disabled = reloadBehavior { return }
         activate()
         guard isConnected, let destination else { return }
-        if sourceObservation?.isValid == false { cancelRetry() }
+        updateIdentityIfNeeded()
+        guard isActive else { return }
         let identifier = ObjectIdentifier(destination)
         switch reloadBehavior {
         case .resubscribe:
             ensembleLog.ensembleDebug(.reloadRequested(destination: identifier, mode: .resubscribe))
-            if canJoinInitialLoad, task != nil {
+            if !needsRebind, canJoinInitialLoad, task != nil {
                 canJoinInitialLoad = false
             } else {
                 reconnect(startsLoading: true)
@@ -116,7 +136,7 @@ final class ViewDataBinding<Value> {
         case .refresh(let prepare):
             guard let refresh = prepare() else { return }
             ensembleLog.ensembleDebug(.reloadRequested(destination: identifier, mode: .refresh))
-            if task == nil || sourceObservation?.isValid == false {
+            if needsRebind || task == nil || connectionValidity?.isValid == false {
                 reconnect(startsLoading: true)
             } else {
                 beginLoading()
@@ -135,11 +155,11 @@ final class ViewDataBinding<Value> {
 
     private func waitForConnection(_ connection: Task<Void, Never>?) async {
         let currentRevision = revision
-        let observation = sourceObservation
+        let validity = connectionValidity
         await withTaskCancellationHandler {
             await connection?.value
         } onCancel: {
-            observation?.cancelValues()
+            validity?.invalidate()
             connection?.cancel()
         }
         if Task.isCancelled, revision == currentRevision {
@@ -153,6 +173,9 @@ final class ViewDataBinding<Value> {
         isActive = false
         activationTask?.cancel()
         activationTask = nil
+        identityObservation?.invalidate()
+        identityObservation = nil
+        needsRebind = false
         cancelRetry()
         disconnect()
     }
@@ -166,9 +189,11 @@ final class ViewDataBinding<Value> {
     }
 
     private func reconnect(startsLoading: Bool) {
+        needsRebind = false
         disconnect()
         guard isActive, let destination else { return }
         isConnected = true
+        connectionValidity = SourceValidity()
         let currentRevision = revision
         ensembleLog.ensembleDebug(.bindingStarted(
             destination: ObjectIdentifier(destination), reload: reloadBehavior.logMode
@@ -188,13 +213,13 @@ final class ViewDataBinding<Value> {
             })
         }
         if startsLoading { beginLoading() }
-        if !connect(self, currentRevision), accepts(currentRevision) { disconnect() }
+        if !makeConnection(self, currentRevision), accepts(currentRevision) { disconnect() }
     }
 
     private func disconnect() {
         canJoinInitialLoad = false
-        sourceObservation?.invalidate()
-        sourceObservation = nil
+        connectionValidity?.invalidate()
+        connectionValidity = nil
         revision &+= 1
         task?.cancel()
         task = nil
@@ -208,13 +233,34 @@ final class ViewDataBinding<Value> {
     }
 
     private func accepts(_ revision: UInt) -> Bool {
-        isActive && isConnected && self.revision == revision && sourceObservation?.acceptsValues != false
+        guard isActive, isConnected, self.revision == revision else { return false }
+        updateIdentityIfNeeded()
+        return isActive && !needsRebind && connectionValidity?.isValid == true
     }
 
-    private func sourceInputsDidChange(_ observation: SourceObservation, revision: UInt) {
-        guard isActive, isConnected, self.revision == revision, sourceObservation === observation else { return }
-        cancelRetry()
-        start()
+    private func updateIdentityIfNeeded() {
+        guard isActive, identityObservation?.isValid != true else { return }
+        identityObservation?.invalidate()
+        let observation = SourceValidity()
+        identityObservation = observation
+        let changed = observeIdentity { [weak self] in
+            // Observation reports willSet. Compare after the setter, or before accepting a
+            // subsequent callback. Equal IDs renew tracking without invalidating producer work.
+            guard observation.invalidate() else { return }
+            Task { @MainActor [weak self] in self?.identityDidChange() }
+        }
+        guard let changed else { cancel(); return }
+        if changed, isConnected {
+            needsRebind = true
+            connectionValidity?.invalidate()
+            cancelRetry()
+        }
+    }
+
+    private func identityDidChange() {
+        guard isActive else { return }
+        updateIdentityIfNeeded()
+        if isActive, needsRebind { start() }
     }
 
     private func beginLoading() {
@@ -231,20 +277,8 @@ final class ViewDataBinding<Value> {
         receive: @escaping @MainActor (Source.Element, ViewDataSink<Value>) -> Void
     ) -> Connect {
         { binding, revision in
-            let observation = SourceObservation()
-            binding.sourceObservation = observation
-            let source = withObservationTracking {
-                make()
-            } onChange: { [weak binding] in
-                // Observation reports willSet. Reject old work synchronously, then rebuild
-                // on the main actor after the setter finishes and batched inputs settle.
-                guard observation.invalidate() else { return }
-                Task { @MainActor [weak binding] in
-                    binding?.sourceInputsDidChange(observation, revision: revision)
-                }
-            }
-            guard let source else { return false }
-            guard observation.isValid else { return true }
+            guard let source = make() else { return false }
+            guard binding.accepts(revision) else { return true }
             binding.consume(source, revision: revision, receive: receive)
             return true
         }
@@ -307,24 +341,18 @@ final class ViewDataBinding<Value> {
     }
 }
 
-// Factory changes and request cancellation may arrive from any executor. Cancellation rejects
-// producer values while retaining input tracking, so a later input change can reconnect.
-private final class SourceObservation: Sendable {
-    private nonisolated let validity = OSAllocatedUnfairLock(initialState: (inputs: true, values: true))
+// Identity notifications and request cancellation may arrive from any executor. Separate tokens
+// let equal identity changes renew tracking without cancelling a connection or a pending request.
+private final class SourceValidity: Sendable {
+    private nonisolated let validity = OSAllocatedUnfairLock(initialState: true)
 
-    nonisolated var isValid: Bool { validity.withLock { $0.inputs } }
-
-    nonisolated var acceptsValues: Bool { validity.withLock { $0.inputs && $0.values } }
-
-    nonisolated func cancelValues() {
-        validity.withLock { $0.values = false }
-    }
+    nonisolated var isValid: Bool { validity.withLock { $0 } }
 
     @discardableResult
     nonisolated func invalidate() -> Bool {
         validity.withLock { valid in
-            guard valid.inputs else { return false }
-            valid = (inputs: false, values: false)
+            guard valid else { return false }
+            valid = false
             return true
         }
     }

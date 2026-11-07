@@ -342,6 +342,7 @@ struct ViewDataTests {
         let dataFixture = SourceFixture<Int, _>(make: { stream })
         defer { withExtendedLifetime(dataFixture) {} }
         let data = dataFixture.data
+        data.connect()
         #expect(await eventually { data.binding?.isConnected == true })
         #expect(data.isLoading)
 
@@ -363,6 +364,7 @@ struct ViewDataTests {
         })
         defer { withExtendedLifetime(dataFixture) {} }
         let data = dataFixture.data
+        data.connect()
         #expect(await eventually { data.binding?.isConnected == true })
 
         continuation.yield(42)
@@ -379,6 +381,7 @@ struct ViewDataTests {
         let dataFixture = SourceFixture<Int, _>(make: { stream })
         defer { withExtendedLifetime(dataFixture) {} }
         let data = dataFixture.data
+        data.connect()
         #expect(await eventually { data.binding?.isConnected == true })
         continuation.finish(throwing: TestError.expected)
 
@@ -401,6 +404,7 @@ struct ViewDataTests {
         })
         defer { withExtendedLifetime(dataFixture) {} }
         let data = dataFixture.data
+        data.connect()
         if initialState == .success { data.set(41) }
         if initialState == .failure { data.fail(TestError.expected) }
         #expect(await eventually { data.binding?.isConnected == true })
@@ -431,6 +435,7 @@ struct ViewDataTests {
         }
         defer { withExtendedLifetime(dataFixture) {} }
         let data = dataFixture.data
+        data.connect()
         #expect(await eventually { data.binding?.isConnected == true })
         #expect(data.isLoading)
         #expect(data.retryAction != nil)
@@ -463,6 +468,7 @@ struct ViewDataTests {
         }
         defer { withExtendedLifetime(dataFixture) {} }
         let data = dataFixture.data
+        data.connect()
         #expect(await eventually { data.binding?.isConnected == true })
         firstContinuation.yield(.result(.success(41)))
         #expect(await eventually { retainedSink != nil && data.latestValue == .available(41) })
@@ -490,6 +496,7 @@ struct ViewDataTests {
         let dataFixture = SourceFixture<Int, _>(make: { source })
         defer { withExtendedLifetime(dataFixture) {} }
         let data = dataFixture.data
+        data.connect()
         #expect(await eventually { data.binding?.isConnected == true })
         let loadTask = Task {
             await data.load({
@@ -537,6 +544,7 @@ struct ViewDataTests {
         let dataFixture = SourceFixture<Int, _>(make: { source })
         defer { withExtendedLifetime(dataFixture) {} }
         let data = dataFixture.data
+        data.connect()
         #expect(await eventually { data.binding?.isConnected == true })
         let loadTask = Task {
             await data.load({
@@ -564,6 +572,7 @@ struct ViewDataTests {
         let dataFixture = SourceFixture<Int, _>(.available(41), make: { source })
         defer { withExtendedLifetime(dataFixture) {} }
         let data = dataFixture.data
+        data.connect()
         #expect(await eventually { data.binding?.isConnected == true })
         data.reset()
         #expect(data.isEmpty)
@@ -586,6 +595,7 @@ struct ViewDataTests {
         })
         defer { withExtendedLifetime(dataFixture) {} }
         let data = dataFixture.data
+        data.connect()
         #expect(await eventually { data.binding?.isConnected == true })
 
         #expect(continuations.count == 1)
@@ -617,6 +627,7 @@ struct ViewDataTests {
         })
         defer { withExtendedLifetime(dataFixture) {} }
         let data = dataFixture.data
+        data.connect()
         #expect(await eventually { data.binding?.isConnected == true })
 
         continuations[0].yield(.failure(.expected))
@@ -641,6 +652,7 @@ struct ViewDataTests {
         })
         defer { withExtendedLifetime(dataFixture) {} }
         let data = dataFixture.data
+        data.connect()
         #expect(await eventually { data.binding?.isConnected == true })
 
         #expect(continuations.count == 1)
@@ -676,6 +688,7 @@ struct ViewDataTests {
         })
         defer { withExtendedLifetime(dataFixture) {} }
         let data = dataFixture.data
+        data.connect()
         #expect(await eventually { data.binding?.isConnected == true })
 
         await data.reload()
@@ -709,6 +722,7 @@ struct ViewDataTests {
         })
         defer { withExtendedLifetime(dataFixture) {} }
         let data = dataFixture.data
+        data.connect()
         #expect(await eventually { data.binding?.isConnected == true })
 
         continuations[0].finish()
@@ -733,6 +747,7 @@ struct ViewDataTests {
         }, allowsReload: false) { _, result, sink in sink.receive(result) }
         defer { withExtendedLifetime(dataFixture) {} }
         let data = dataFixture.data
+        data.connect()
         #expect(await eventually { data.binding?.isConnected == true })
 
         #expect(data.retryAction == nil)
@@ -752,6 +767,7 @@ struct ViewDataTests {
         let (stream, continuation) = AsyncStream<Result<Int, TestError>>.makeStream()
         var fixture: SourceFixture<Int, _>? = SourceFixture(make: { stream })
         let data = fixture!.data
+        data.connect()
         #expect(await eventually { data.binding?.isConnected == true })
         continuation.yield(.failure(.expected))
         #expect(await eventually { data.isFailed && data.retryAction != nil })
@@ -770,6 +786,7 @@ struct ViewDataTests {
             return AsyncStream<Result<Int, TestError>> { _ in }
         })
         let data = fixture!.data
+        data.connect()
         #expect(await eventually { data.isLoading })
         let staleRetry = try #require(data.retryAction)
         fixture = nil
@@ -781,7 +798,7 @@ struct ViewDataTests {
         #expect(data.binding?.isConnected == false)
     }
 
-    @Test("Cold cancellation invalidates retained sinks and keeps factory-input tracking")
+    @Test("Cold cancellation invalidates retained sinks and keeps identity tracking")
     func cancelledConnectionStaysObsolete() async throws {
         var producers: [AsyncStream<Int>.Continuation] = []
         var sinks: [ViewDataSink<Int>] = []
@@ -796,6 +813,7 @@ struct ViewDataTests {
         }
         defer { withExtendedLifetime(fixture) {} }
         let data = fixture.data
+        data.connect()
         #expect(await eventually { producers.count == 1 })
         producers[0].yield(1)
         #expect(await eventually { data.latestValue == .available(1) })
@@ -821,6 +839,7 @@ struct ViewDataTests {
             AsyncStream<Result<Int, TestError>> { _ in }
         })
         let data = fixture!.data
+        data.connect()
         #expect(await eventually { data.binding?.isConnected == true })
         var loadStarted = false
         let load = Task {
@@ -845,6 +864,7 @@ struct ViewDataTests {
         let dataFixture = SourceFixture<Int, _>(.available(42), make: { stream })
         defer { withExtendedLifetime(dataFixture) {} }
         let data = dataFixture.data
+        data.connect()
         #expect(await eventually { data.binding?.isConnected == true })
         continuation.finish()
 
@@ -866,6 +886,7 @@ struct ViewDataTests {
         }
         defer { withExtendedLifetime(dataFixture) {} }
         let data = dataFixture.data
+        data.connect()
         #expect(await eventually { data.binding?.isConnected == true })
         oldProducer.yield(.result(.success(1)))
         #expect(await eventually { data.latestValue == .available(1) })
@@ -905,6 +926,7 @@ struct ViewDataTests {
         weak var weakOwner: CaptureOwner?
         weakOwner = owner
         let data = owner!.entries
+        data.connect()
         let producer = owner!.source.continuation
         #expect(await eventually { data.binding?.isConnected == true })
         owner = nil
@@ -929,6 +951,7 @@ struct ViewDataTests {
             let dataFixture = SourceFixture(make: source.values, refresh: {})
             defer { withExtendedLifetime(dataFixture) {} }
             let data = dataFixture.data
+            data.connect()
             weakData = data
             weakBinding = data.binding
             #expect(await eventually { data.binding?.isConnected == true })

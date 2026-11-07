@@ -36,21 +36,23 @@ extension ViewData {
     /// Returns the source storage owned by a generated macro property.
     ///
     /// On first access, the synchronous seed is evaluated once and the weak-owner binding is
-    /// installed with activation scheduled after the getter returns. Later accesses return the
-    /// existing storage. Observable inputs read synchronously by `make` are tracked until the
-    /// owning model releases the storage. Applications declare sources with `@ViewDataSource`.
+    /// installed without starting work. Later accesses return the
+    /// existing storage. Only the identity projection is tracked; source construction runs
+    /// outside that scope. Applications declare sources with `@ViewDataSource`.
     ///
     /// - Parameters:
     ///   - existing: The storage previously created for the property, if any.
     ///   - owner: The model supplied to source callbacks without retaining it between calls.
+    ///   - id: The macro's identity projection, or a constant for a fixed source.
     ///   - initial: The successful availability to expose on first access; nil starts unavailable.
-    ///   - make: A prompt factory that reads the inputs needed to select a source.
+    ///   - make: A prompt, untracked factory that builds the selected source.
     ///   - refresh: The hot producer's explicit refresh action; rebinding never invokes it.
     ///   - allowsReload: Whether programmatic reload and failure retry are enabled.
     ///   - receive: Translates an element using the owner and a connection-scoped sink.
-    public static func _source<Owner: AnyObject, Source: AsyncSequence>(
+    public static func _source<Owner: AnyObject, ID: Equatable, Source: AsyncSequence>(
         _ existing: _Source?,
         owner: Owner,
+        id: @escaping @MainActor (Owner) -> ID,
         initial: (@MainActor (Owner) -> ViewDataAvailability<Value>)?,
         make: @escaping @MainActor (Owner) -> Source,
         refresh: (@MainActor (Owner) async -> Void)?,
@@ -60,10 +62,25 @@ extension ViewData {
         if let existing { return existing }
         let data = ViewData(initial?(owner) ?? .unavailable)
         data.binding = ViewDataBinding(
-            destination: data, owner: owner, make: make, refresh: refresh,
+            destination: data, owner: owner, id: id, make: make, refresh: refresh,
             allowsReload: allowsReload, receive: receive
         )
         return _Source(data)
+    }
+
+    /// Requests the model-owned source's connection without invoking its hot refresh action.
+    ///
+    /// Startup is scheduled outside the current call stack. Repeated calls share one connection,
+    /// including after a sequence completes; use ``reload()`` to request another result.
+    /// A cold source naturally starts its initial work on connection. Returning does not imply
+    /// initial data has arrived or that an arbitrary upstream producer is ready.
+    ///
+    /// `AsyncContent` requests connection automatically when rendered, including when its initial
+    /// presentation is hidden. Other consumers can call this from their model's startup action.
+    /// Plain property, phase, and latest-value reads stay passive. The connection remains alive
+    /// until the owning model is released. Unmanaged data and released owners do nothing.
+    public func connect() {
+        binding?.connect()
     }
 
     /// Requests another result from the model-owned source.
@@ -73,7 +90,7 @@ extension ViewData {
     /// completion; use a refresh action for ongoing streams. Cancelling a cold reload cancels
     /// that request's connection without ending the model-owned source configuration. The first
     /// explicit cold reload joins a pending initial load; later reloads resubscribe.
-    /// Calling immediately after first access activates the source before requesting work.
+    /// Calling before connection ensures startup before requesting work.
     /// Hot subscriptions keep delivering updates after refresh finishes. Reading the property or
     /// presenting it in another view does not restart a completed sequence.
     /// Unmanaged data, released owners, reload-disabled sources, and cancelled calls remain inert.

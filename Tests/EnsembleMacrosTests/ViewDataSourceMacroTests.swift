@@ -28,12 +28,12 @@ import Testing
 
 @Suite("Source macro expansion")
 struct ViewDataSourceMacroTests {
-    @Test("Generates stable get-only source state with a default result adapter", arguments: ["", ", receive: nil"])
-    func propertyExpansion(_ adapter: String) {
+    @Test("Generates stable get-only source state with a default result adapter", arguments: ["", ", receive: nil"], [false, true])
+    func propertyExpansion(_ adapter: String, _ keyed: Bool) {
         assertMacroExpansion(
             """
             class Model {
-                @ViewDataSource(make: { (model: Self) in model.values() }\(adapter))
+                @ViewDataSource(\(keyed ? "id: \\.filterID, " : "")make: { (model: Self) in model.values() }\(adapter))
                 var value: ViewData<Int>
             }
             """,
@@ -44,6 +44,9 @@ struct ViewDataSourceMacroTests {
                         let __macro_local_4datafMu_ = ViewData<Int>._source(
                             _value,
                             owner: self,
+                            id: {\(keyed ? "" : " _ in")
+                                \(keyed ? "$0 [keyPath: \\.filterID]" : "false")
+                            },
                             initial: nil,
                             make: { (model: Model) in
                                 model.values()
@@ -67,13 +70,13 @@ struct ViewDataSourceMacroTests {
         )
     }
 
-    @Test("Resolves Self in seeds and adapters and forwards refresh and reload policy")
-    func ownerCallbacks() {
+    @Test("Resolves Self in seeds and adapters and forwards refresh and reload policy", arguments: [false, true])
+    func ownerCallbacks(_ keyed: Bool) {
         assertMacroExpansion(
             """
             class Model {
                 @ViewDataSource(
-                    initial: { (model: Self) in model.initial() },
+                    \(keyed ? "id: \\.filterID,\n        " : "")initial: { (model: Self) in model.initial() },
                     make: { model in model.values() },
                     refresh: { model in await model.reload() },
                     allowsReload: false,
@@ -89,6 +92,9 @@ struct ViewDataSourceMacroTests {
                         let __macro_local_4datafMu_ = ViewData<Int>._source(
                             _value,
                             owner: self,
+                            id: {\(keyed ? "" : " _ in")
+                                \(keyed ? "$0 [keyPath: \\.filterID]" : "false")
+                            },
                             initial: { (model: Model) in
                                 model.initial()
                             },
@@ -143,6 +149,55 @@ struct ViewDataSourceMacroTests {
             diagnostics: [DiagnosticSpec(
                 message: "@ViewDataSource callbacks must not capture instance self or super",
                 line: 2, column: column
+            )],
+            macroSpecs: ["ViewDataSource": MacroSpec(type: ViewDataSourceMacro.self)],
+            failureHandler: { Issue.record(Comment(rawValue: $0.message)) }
+        )
+    }
+
+    @Test("Identity must be a key-path literal", arguments: ["identityPath", "{ model in model.id }"])
+    func identityExpression(_ expression: String) {
+        assertMacroExpansion(
+            """
+            class Model {
+                @ViewDataSource(id: \(expression), make: { (model: Self) in model.values() })
+                var value: ViewData<Int>
+            }
+            """,
+            expandedSource: """
+            class Model {
+                var value: ViewData<Int>
+            }
+            """,
+            diagnostics: [DiagnosticSpec(
+                message: "@ViewDataSource id must be a key-path literal",
+                line: 2, column: "    @ViewDataSource(id: ".count + 1
+            )],
+            macroSpecs: ["ViewDataSource": MacroSpec(type: ViewDataSourceMacro.self)],
+            failureHandler: { Issue.record(Comment(rawValue: $0.message)) }
+        )
+    }
+
+    @Test("Identity subscripts cannot capture instance self")
+    func identityCapture() {
+        let arguments = "id: \\.items[self.index], make: { (model: Model) in model.values() }"
+        let token = arguments.range(of: "self")!
+        assertMacroExpansion(
+            """
+            class Model {
+                @ViewDataSource(\(arguments))
+                var value: ViewData<Int>
+            }
+            """,
+            expandedSource: """
+            class Model {
+                var value: ViewData<Int>
+            }
+            """,
+            diagnostics: [DiagnosticSpec(
+                message: "@ViewDataSource id must not capture instance self or super",
+                line: 2,
+                column: "    @ViewDataSource(".count + arguments.distance(from: arguments.startIndex, to: token.lowerBound) + 1
             )],
             macroSpecs: ["ViewDataSource": MacroSpec(type: ViewDataSourceMacro.self)],
             failureHandler: { Issue.record(Comment(rawValue: $0.message)) }

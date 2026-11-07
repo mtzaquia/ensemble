@@ -92,8 +92,8 @@ extension ViewDataAvailability: Sendable where Value: Sendable {}
 ///
 /// `ViewData` retains its latest successful value while loading or failed. A view can present that
 /// retained value without requiring the source to emit it again.
-/// `@ViewDataSource` declares a source that activates on first access and lives with its model.
-/// Observable factory inputs rebind that source while preserving this state and its latest value.
+/// `@ViewDataSource` declares a source that connects through `AsyncContent` or ``connect()`` and
+/// lives with its model. An optional identity key path controls automatic rebinding.
 ///
 /// ``reset()`` clears presentation state without cancelling work. A later accepted update from a
 /// load or binding can supply another value.

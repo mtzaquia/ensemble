@@ -1,10 +1,10 @@
 # Sources and lifecycle
 
 A `@ViewDataSource` declaration owns stable presentation state and a source connection for its
-model's lifetime. First access activates it. Views, badges, and derived conditions read the same
+model's lifetime once connected. Views, badges, and derived conditions read the same
 data without subscription tasks, observation modifiers, or consumer leases.
 
-## Activate on first access
+## Connect when needed
 
 ```swift
 @ViewDataSource(
@@ -17,22 +17,24 @@ var entries: ViewData<[Entry]>
 ```
 
 Constructing the model starts no work. The first property access evaluates the seed synchronously
-and schedules source activation after the getter returns, outside view-body evaluation. The factory
-must return promptly; expensive work belongs to its producer. An immediate `reload()` coordinates
-with that activation. Every later read returns the same data and shares the same connection.
+and creates dormant data. `AsyncContent` requests connection when its body renders, including when
+the initial presentation is hidden. The factory must return promptly; expensive work belongs to
+its producer. Every later read returns the same data.
 
-A badge can read `model.entries.latestValue` directly. A condition derived from that value activates
-the source even when the condition prevents `AsyncContent` from being constructed. `AsyncContent`
-controls rendering, loading policy, and failure policy; it has no source-lifecycle responsibilities.
+A badge can read `model.entries.latestValue` directly without starting work. For badges or conditions
+that prevent `AsyncContent` from being constructed, call `entries.connect()` from model startup,
+or `Ensemble.connect(profile, activity, notifications)`. Both are synchronous and schedule startup
+outside the current call stack. Repeated calls share one connection without awaiting initial data
+or invoking hot refresh. `reload()` ensures startup itself before requesting work.
 
 ## Model lifetime and reset
 
-After activation, hiding a section, navigating away, or finishing a reload does not disconnect its
+Once connected, hiding a section, navigating away, or finishing a reload does not disconnect its
 source while the model is retained. Choose model scope deliberately: a retained tab model or an
-application-wide model keeps its accessed sources running. Entering the background does not release
+application-wide model keeps its connected sources running. Entering the background does not release
 that model. Producer-specific suspension and background execution remain application concerns.
 
-Releasing the model cancels its subscription and retry work and invalidates pending factory-input
+Releasing the model cancels its subscription and retry work and invalidates pending identity
 callbacks. This also happens when another object retains its `ViewData`, sink, or retry action.
 The retained data keeps its presentation, but source reload becomes inert. Models released before
 scheduled activation runs start no source work.
@@ -79,7 +81,7 @@ not that every source succeeded or every stream outcome has been processed.
 
 Cancellation propagates to outstanding actions and cold requests. It does not end the owning
 models' lifetimes. Plain data, reload-disabled sources, an empty batch, and already-cancelled calls
-perform no reload work. Accessing a reload-disabled property still activates its source normally.
+perform no reload work. `AsyncContent` and `connect()` still connect reload-disabled sources normally.
 Duplicate instances in one batch reload once.
 
 ### Overlapping requests
@@ -122,21 +124,22 @@ synchronously, and reads made by the adapter do not become source-selection depe
 Set `allowsReload: false` on the macro to suppress programmatic reload and failure retry while
 keeping activation and automatic rebinding.
 
-## Track source-selection inputs
+## Track connection identity
 
-Changing observable properties read synchronously by the factory invalidates old results, sinks,
-and retries immediately. Ensemble then rebuilds the subscription on the main actor using the
-latest inputs. Several synchronous changes coalesce. The same data and successful content survive;
-hot sources reconnect without invoking refresh.
+Pass `id: \.selectedFilter` or a computed composite `Equatable` ID to the macro. Only that projection
+is observed; factory construction runs untracked, including producer-internal reads. Equal IDs
+renew dependencies without replacing sinks, retries, connections, or running requests. Changed IDs
+reject obsolete callbacks and rebuild on the main actor. The same data and successful content
+survive; hot sources reconnect without invoking refresh. Omit `id` for a fixed connection.
 
-Dependency tracking is renewed on every connection, including conditional branches. Completed
-sequences still track input changes while their model lives. Unread declarations stay dormant;
-a first access selects the current inputs. Owner teardown disarms pending callbacks and prevents
+Dependency tracking is renewed after notifications, including conditional branches. Completed
+sequences still track identity changes while their model lives. Unconnected declarations stay dormant;
+connecting selects the current identity. Owner teardown disarms pending callbacks and prevents
 further connections.
 
 Use `reset()` before changing an account or another domain identity if the old value is no longer
 appropriate. Seeds run once and are never reapplied on rebinding. See
-[Source-backed data](source-backed-data.md#rebind-through-observable-inputs).
+[Source-backed data](source-backed-data.md#rebind-through-connection-identity).
 
 ## Completion, errors, and cancellation
 
@@ -146,7 +149,7 @@ is not presented as a failure. Empty completion or cancellation settles loading 
 failure, retained success, or empty state. A previously emitted result keeps its phase.
 
 Reload can reconnect a completed sequence. Cancelling an awaited cold reload stops that request
-and rejects its retained sinks; factory-input tracking remains active for future input changes.
+and rejects its retained sinks; identity tracking remains active for future changes.
 Cancelling a hot refresh leaves its model-owned subscription intact. Owner teardown removes retry
 and settles only that connection's loading transition. Connection revisions reject obsolete updates
 without settling a newer one-shot load or replacement request.

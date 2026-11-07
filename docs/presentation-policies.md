@@ -91,9 +91,9 @@ so an explicit placeholder can still be used while loading. See [Render optional
 | Explicit reset with no subsequent result | Supplied placeholder, `.placeholder` |
 
 Keep the same `ViewData` instance across refreshes and observed source changes. Reload the existing
-source or change observable inputs read by its factory to rebind while keeping successful model
+source or change its declared connection identity to rebind while keeping successful model
 data available. Do not call `reset()` or supply an artificial empty success merely because another
-request starts. See [Source-backed data](source-backed-data.md#rebind-through-observable-inputs).
+request starts. See [Source-backed data](source-backed-data.md#rebind-through-connection-identity).
 Use `reset()` when the old value is no longer suitable, such as when switching accounts. That
 deliberate invalidation removes retention and restores the initial fallback immediately. Reset
 does not cancel work; cancel or supersede obsolete producers so they cannot repopulate the destination

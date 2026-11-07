@@ -33,6 +33,7 @@ struct OwnerSourceTests {
         defer { withExtendedLifetime(model) {} }
         #expect(model.seedReads == 0)
         let data = model.data
+        data.connect()
         #expect(model.seedReads == 1)
         #expect(data.latestValue == .available(7))
         #expect(data.phase.kind == .success)
@@ -76,6 +77,7 @@ struct OwnerSourceTests {
         let model = OwnerSeedModel()
         defer { withExtendedLifetime(model) {} }
         let data = model.custom
+        data.connect()
         #expect(data.latestValue == .available(7))
         model.observedData = data
         #expect(await eventually { model.source.connections == 1 })
@@ -90,6 +92,7 @@ struct OwnerSourceTests {
         weak let weakModel = model
         let source = model!.source
         let data = model!.adapted
+        data.connect()
         #expect(await eventually { source.connections == 1 })
         model!.observedData = data
         source.emit(.success(21))
@@ -123,6 +126,7 @@ struct OwnerSourceTests {
 
 @Observable
 private final class OwnerSeedModel {
+    var sourceID: ObjectIdentifier { ObjectIdentifier(source) }
     var source = OwnerSeedSource()
     var seedReads = 0
     var valuesAfterReceive: [ViewDataAvailability<Int>] = []
@@ -130,6 +134,7 @@ private final class OwnerSeedModel {
     weak var observedData: ViewData<Int>?
 
     @ViewDataSource(
+        id: \.sourceID,
         initial: { (model: Self) in model.initial() },
         make: { model in model.source.values() },
         refresh: { model in model.source.refresh() }
@@ -138,6 +143,7 @@ private final class OwnerSeedModel {
     var data: ViewData<Int>
 
     @ViewDataSource(
+        id: \.sourceID,
         initial: { _ in .available(7) },
         make: { (model: Self) in model.source.values() },
         refresh: { model in model.source.refresh() },
@@ -147,6 +153,7 @@ private final class OwnerSeedModel {
     var adapted: ViewData<Int>
 
     @ViewDataSource(
+        id: \.sourceID,
         initial: { (model: Self) in model.initial() },
         make: { model in model.source.values().map(OwnerSeedUpdate.result) },
         refresh: { model in model.source.refresh() },

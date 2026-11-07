@@ -513,6 +513,7 @@ struct AsyncContentTests {
         })
         defer { withExtendedLifetime(dataFixture) {} }
         let data = dataFixture.data
+        data.connect()
         #expect(await eventually { continuations.count == 1 })
 
         continuations[0].yield(.failure(.expected))

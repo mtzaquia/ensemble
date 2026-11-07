@@ -11,8 +11,8 @@
 features.
 
 A `ViewData` value remembers successful data and its current lifecycle phase. Declare its source
-with `@ViewDataSource`; first access activates it for the model’s lifetime. The source is rebuilt when
-observable inputs read by its factory change, while the same presentation state retains success.
+with `@ViewDataSource`; `AsyncContent` connects it for the model’s lifetime. An optional `id` key
+path selects when to rebuild the source, while the same presentation state retains success.
 One-shot operations use `await entries.load(...)` on ordinary `ViewData`.
 
 - Seed presentation state immediately, load one value, or bind a stream of updates.
@@ -119,8 +119,18 @@ No context property, start method, or view task is needed for this path. For hot
 use-case outcomes; the model requests loading explicitly. Caching policy stays in the data layer.
 Cold sources fetch through their sequence and resubscribe when `await entries.reload()` is called.
 
-Source properties are get-only and seeded on first read. Activation follows after the getter
-returns; views, badges, and derived conditions share the connection until the model is released.
+Source properties are get-only and seeded on first read. Reads stay passive. `AsyncContent`
+requests connection when rendered; badges and conditional gates can connect from model startup:
+
+```swift
+func start() {
+  Ensemble.connect(profile, activity, notifications)
+}
+```
+
+`data.connect()` and the batch convenience are synchronous, idempotent, and schedule startup outside
+the current call stack. They do not invoke a hot refresh action. Once connected, all consumers share
+the connection until the model is released.
 Every callback receives the weakly held model, including `receive(owner, element, sink)`.
 The optional adapter is unnecessary for ordinary `Result` streams. In `@Observable` models, put `@ObservationIgnored` after `@ViewDataSource`.
 
@@ -134,9 +144,23 @@ The batch starts requests concurrently, waits for all actions, and lets each chu
 failure. Each call behaves like `await data.reload()` and propagates caller cancellation.
 Finishing a request keeps the model-owned subscription alive for later updates.
 
-Keep source selection in the factory. For example, `model.repository.values(for: model.filter)`
-tracks an observable `filter`; changing it automatically cancels the old subscription and builds
-a new one. Successful content remains in the same `ViewData`. Use `reset()` before changing an
+Declare source identity separately from source construction:
+
+```swift
+@ViewDataSource(
+  id: \.filter,
+  make: { (model: Self) in model.repository.values(for: model.filter) }
+)
+@ObservationIgnored
+var entries: ViewData<[Entry]>
+```
+
+Only the `id` projection is observed. An unequal identity rebuilds the connection; equal identities
+preserve it, including its sinks and retry. `make` runs untracked, including producer internals.
+Without `id`, source changes do not trigger automatic rebinding. Reload and retry keep their
+configured hot or cold behavior. Use a computed `Equatable` identity for multiple inputs,
+including mutable producer identity.
+Successful content remains in the same `ViewData`. Use `reset()` before changing an
 account or another domain identity when the previous value should be discarded.
 See [Source-backed data and v3 migration](docs/source-backed-data.md).
 
@@ -147,7 +171,7 @@ The [presentation guide](docs/presentation-policies.md) covers loading, failure,
 ## Documentation
 
 - [Source-backed data and v3 migration](docs/source-backed-data.md) — lazy activation, property
-  macros, observed source inputs, and lifetime boundaries.
+  macros, connection identity, and lifetime boundaries.
 - [Getting started](docs/getting-started.md) — connect a source, choose its reload behavior, and
   render the first result.
 - [Presentation policies](docs/presentation-policies.md) — choose placeholder, retained, hidden,

@@ -1,8 +1,8 @@
 # Getting started
 
 Declare a source with `@ViewDataSource`, then read its `ViewData` from views or model logic.
-First access activates the source for its model’s lifetime. `AsyncContent` renders that state;
-no observation task, modifier, or startup method is needed.
+`AsyncContent` connects the source for its model’s lifetime and renders that state;
+no observation task or modifier is needed.
 
 ## Declare presentation data
 
@@ -30,8 +30,8 @@ final class EntriesViewModel {
 
 The application supplies `cachedAvailability`. Its seed closure runs synchronously once on first
 read, including successful empty collections or optional `nil`. Omit `initial:` to start unavailable.
-The macro creates stable data and schedules activation after the getter returns. Its factory must
-return promptly; expensive work belongs to the producer. Unread declarations start no work.
+The macro creates stable data without starting its source. Its factory must return promptly when
+connected; expensive work belongs to the producer. Plain property reads stay passive.
 
 Callbacks receive a weakly held owner. In an `@Observable` model, put `@ObservationIgnored` after
 `@ViewDataSource`. See [Source-backed data](source-backed-data.md) for callback capture rules.
@@ -49,8 +49,17 @@ List {
 }
 ```
 
-`AsyncContent` renders source-backed data even when its initial presentation is hidden.
-Badge and conditional-gate reads activate the same source without constructing `AsyncContent`.
+`AsyncContent` requests connection when rendered, even when its initial presentation is hidden.
+Badge and conditional-gate reads stay passive. For those consumers, connect from model startup:
+
+```swift
+func start() {
+  entries.connect()
+  // Or: Ensemble.connect(profile, activity, notifications)
+}
+```
+
+Connection is scheduled outside the current call stack and repeated calls share one subscription.
 The seed is immediately renderable; no startup task delays it. Default loading and failure policies
 retain the latest successful value. Empty collections are successes: render their empty state inside
 the content builder. See [Presentation policies](presentation-policies.md) for failure UI and retry.
@@ -78,8 +87,10 @@ loading explicitly and chooses the data layer's caching policy. Explicit reload 
 invoke the configured refresh action. Reload works immediately after first access, before a view
 renders, and keeps the model-owned subscription alive afterward.
 
-Keep source-selection inputs observable and read them synchronously inside `make`. Changes
-rebind the source automatically while preserving successful content. Rebinding a hot source only
+For automatic rebinding, add `id: \.selectedFilter` to the macro, where the projected value is
+`Equatable` and reads observable selection inputs. Only a changed identity rebuilds the connection;
+`make` runs untracked. Omit `id` for a fixed connection, or use a computed identity for multiple
+inputs. Rebinding preserves successful content. Rebinding a hot source only
 subscribes; use `await reload()` for an explicit request. Reset before changing domain identity
 when the previous value should be cleared.
 
