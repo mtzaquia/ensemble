@@ -3,7 +3,7 @@
 Declare a managed source with `@ViewDataSource`. The macro owns the stable data instance, synchronous
 seed, weak-owner callbacks, and a connection that lives with the model after startup. `AsyncContent`
 requests connection automatically; other consumers use `connect()`. An optional `id` key path
-selects when to rebind. This is unreleased v3 behavior on `zaquia/v3`.
+selects when to rebind. This guide describes the `3.0.0-beta.1` prerelease.
 
 ## Declare the source once
 
@@ -207,18 +207,24 @@ Use `.onChange(of: data.latestValue)` for view-local reactions to `Equatable` st
 It does not connect the source and may coalesce updates. Use `receive` for each accepted source
 event and model effects.
 
-## Migrate to macro-owned sources
+## Migrate from v2
 
-- Replace source-aware `ViewData` initializers with `@ViewDataSource` declarations.
-- Move seed assignments and `initialValue:` macro arguments into `initial: { owner in ... }`.
+- Replace `ViewDataContext.bind(...)` registrations with `@ViewDataSource` declarations. Remove
+  the context property and the tasks that installed those registrations.
+- Move source-backed seeds into `initial: { owner in ... }`. For unmanaged data, replace
+  `ViewData(value)` with `ViewData(.available(value))`; use `.unavailable` or `ViewData()` for empty state.
 - Project observable selection inputs through `id`; keep source construction in untracked `make`.
-  Remove `replaceSource` calls and duplicated configuration. There is no public reconnect method.
-- Remove `ViewDataContext` registration, startup binding tasks, explicit `observe()` calls, and
-  consumer observation modifiers. `AsyncContent` requests connection automatically. Use synchronous
-  `connect()` from startup for updates needed before rendering; the owning model controls teardown.
-- Keep `await data.load(...)` for one-shot operations and `await Ensemble.reload(...)` for
-  independent screen requests. These operations do not change source declarations.
-- Replace reload-disabled initializer configuration with `allowsReload: false` on the macro.
+- Let `AsyncContent` request connection automatically, or use synchronous `connect()` from startup
+  for updates needed before rendering. The owning model controls teardown; there is no context-level
+  `cancel` or `cancelAll` registration API.
+- Replace `await context.load(operation, to: data)` with `await data.load(operation)` and
+  `context.reload(data)` with `await data.reload()`. Use `await Ensemble.reload(...)` for independent
+  concurrent screen requests.
+- Map `.resubscribe` to an omitted `refresh` argument, `.refresh(action)` to an owner-aware
+  `refresh: { owner in await owner.reload() }`, and `.disabled` to `allowsReload: false` on the macro.
+  Hot refresh closures should await the producer's actual work.
+- Replace `transitionAnimation:` on `AsyncContent` with `.phaseAnimation(...)` on the instance or
+  an enclosing view. Phase animation is now opt-in; same-phase content animation remains caller-owned.
 
 The Source lifecycle sample changes an explicit source identity and lets Observation rebind it while rows
 remain visible. Package tests cover dependency scope, input changes, stale callbacks, seeds, weak
