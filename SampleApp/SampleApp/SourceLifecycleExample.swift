@@ -116,7 +116,7 @@ private final class SourceLifecycleModel {
         id: \.isSecond,
         initial: { _ in .available(SampleEntry.cached) },
         make: { (model: Self) in model.currentSource.values() },
-        refresh: { model in await model.currentSource.reload() }
+        refresh: { model, _ in await model.currentSource.reload() }
     )
     @ObservationIgnored
     var entries: ViewData<[SampleEntry]>
@@ -164,7 +164,7 @@ private final class MacroSourceModel {
 
     @ViewDataSource(
         make: { (model: Self) in model.useCase.values() },
-        refresh: { model in await model.useCase.reload() }
+        refresh: { model, _ in await model.useCase.reload() }
     )
     var entries: ViewData<[SampleEntry]>
 }

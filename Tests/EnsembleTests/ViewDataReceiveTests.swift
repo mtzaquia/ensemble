@@ -204,7 +204,7 @@ private final class AdaptedModel {
     @ViewDataSource(
         initial: { _ in .available(7) },
         make: { (model: Self) in model.source.values() },
-        refresh: { model in await model.source.reload() },
+        refresh: { model, _ in await model.source.reload() },
         receive: { _, update, sink in
             switch update {
             case .result(let result): sink.receive(result)

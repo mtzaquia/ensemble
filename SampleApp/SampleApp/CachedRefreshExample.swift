@@ -166,7 +166,7 @@ private final class CachedRefreshViewModel {
     @ViewDataSource(
         initial: { _ in .available(SampleEntry.cached) },
         make: { (model: Self) in model.useCase.values() },
-        refresh: { model in await model.useCase.reload() }
+        refresh: { model, _ in await model.useCase.reload() }
     )
     @ObservationIgnored
     var entries: ViewData<[SampleEntry]>

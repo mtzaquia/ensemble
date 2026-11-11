@@ -20,13 +20,22 @@
 //  SOFTWARE.
 //
 
-/// The reason Ensemble asks a loadable producer for data.
-public enum ViewDataLoadRequest: Sendable {
+/// What prompted a request to refresh a source.
+public enum ViewDataReloadReason: Hashable, Sendable {
+    /// A refresh requested by the application, such as when a view reappears.
+    case automatic
+
+    /// A refresh requested by the user, such as pull-to-refresh or retry.
+    case userInitiated
+}
+
+/// The request Ensemble sends to a loadable producer.
+public enum ViewDataLoadRequest: Hashable, Sendable {
     /// The first request for the selected identity.
     case initial
 
     /// An explicit reload or failure retry.
-    case reload
+    case reload(ViewDataReloadReason)
 }
 
 /// A presentation change emitted by a loadable producer or translated from its native updates.

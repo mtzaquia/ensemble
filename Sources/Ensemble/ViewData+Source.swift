@@ -47,7 +47,7 @@ extension ViewData {
     ///   - id: The macro's identity projection, or a constant for a fixed source.
     ///   - initial: The successful availability to expose on first access; nil starts unavailable.
     ///   - make: A prompt, untracked factory that builds the selected source.
-    ///   - refresh: The hot producer's explicit refresh action; rebinding never invokes it.
+    ///   - refresh: The hot producer's refresh action, which receives the owner and reload reason.
     ///   - allowsReload: Whether programmatic reload and failure retry are enabled.
     ///   - receive: Translates an element using the owner and a connection-scoped sink.
     public static func _source<Owner: AnyObject, ID: Equatable, Source: AsyncSequence>(
@@ -57,7 +57,7 @@ extension ViewData {
         id: @escaping @MainActor (Owner) -> ID,
         initial: (@MainActor (Owner) -> ViewDataAvailability<Value>)?,
         make: @escaping @MainActor (Owner) -> Source,
-        refresh: (@MainActor (Owner) async -> Void)?,
+        refresh: (@MainActor (Owner, ViewDataReloadReason) async -> Void)?,
         allowsReload: Bool,
         receive: @escaping @MainActor (Owner, Source.Element, ViewDataSink<Value>) -> Void
     ) -> _Source {
@@ -119,11 +119,26 @@ extension ViewData {
     /// Finishing a hot refresh settles its loading phase if it is still current. Its subscription
     /// keeps delivering updates afterward. Reading the property or
     /// presenting it in another view does not restart a completed sequence.
-    /// Loadable sources await the producer's load action, joining an in-flight initial load.
+    /// New loadable reloads and hot refreshes receive `.automatic`. A loadable source
+    /// joins an in-flight initial load, including when this call starts its connection.
     /// Subsequent reloads reuse the producer, resubscribing if needed. Outcomes arrive separately.
     /// Unmanaged data, released owners, reload-disabled sources, and cancelled calls remain inert.
     /// Use ``Ensemble/reload(_:)`` to run several reload calls concurrently.
     public func reload() async {
-        await binding?.reload()
+        await reload(reason: nil)
+    }
+
+    /// Requests another result with the specified reason.
+    ///
+    /// A loadable source receives `.reload(reason)`, including on first connection. A
+    /// request already in flight can continue alongside it according to the producer's
+    /// overlap policy. A hot refresh receives the reason as its second argument.
+    /// Cold sources keep their usual resubscription behavior.
+    public func reload(_ reason: ViewDataReloadReason) async {
+        await reload(reason: reason)
+    }
+
+    func reload(reason: ViewDataReloadReason?) async {
+        await binding?.reload(reason: reason)
     }
 }

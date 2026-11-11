@@ -44,7 +44,7 @@ struct LoadableSourceExample: View {
                 Button("Switch account") { model.isWorkAccount.toggle() }
                     .disabled(!showsEntries)
                     .accessibilityIdentifier(SampleAppAccessibility.loadableSwitch)
-                Button("Reload") { Task { await model.entries.reload() } }
+                Button("Reload") { Task { await model.entries.reload(.userInitiated) } }
                     .disabled(!showsEntries)
                     .accessibilityIdentifier(SampleAppAccessibility.loadableReload)
             } footer: {
@@ -124,7 +124,7 @@ private final class LoadableEntriesProducer: ViewDataLoadableSource {
 
     func viewDataLoad(_ request: ViewDataLoadRequest) async {
         let account = isWorkAccount ? "work" : "personal"
-        if request == .reload {
+        if case .reload = request {
             reloads += 1
             if reloads == 1 {
                 continuation?.yield(.result(.failure(SampleFailure.offline)))

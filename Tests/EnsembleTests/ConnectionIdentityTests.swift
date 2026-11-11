@@ -246,7 +246,7 @@ private final class PresentationIdentityModel {
     @ViewDataSource(
         id: \.walletID,
         make: { (model: Self) in model.source.values(for: model.walletID) },
-        refresh: { model in model.source.refresh() },
+        refresh: { model, _ in model.source.refresh() },
         receive: { model, result, sink in
             model.lastSink = sink
             sink.receive(result)

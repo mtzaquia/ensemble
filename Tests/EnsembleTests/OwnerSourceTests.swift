@@ -137,7 +137,7 @@ private final class OwnerSeedModel {
         id: \.sourceID,
         initial: { (model: Self) in model.initial() },
         make: { model in model.source.values() },
-        refresh: { model in model.source.refresh() }
+        refresh: { model, _ in model.source.refresh() }
     )
     @ObservationIgnored
     var data: ViewData<Int>
@@ -146,7 +146,7 @@ private final class OwnerSeedModel {
         id: \.sourceID,
         initial: { _ in .available(7) },
         make: { (model: Self) in model.source.values() },
-        refresh: { model in model.source.refresh() },
+        refresh: { model, _ in model.source.refresh() },
         receive: { (model: Self, result, sink) in model.receive(result, sink: sink) }
     )
     @ObservationIgnored
@@ -156,7 +156,7 @@ private final class OwnerSeedModel {
         id: \.sourceID,
         initial: { (model: Self) in model.initial() },
         make: { model in model.source.values().map(OwnerSeedUpdate.result) },
-        refresh: { model in model.source.refresh() },
+        refresh: { model, _ in model.source.refresh() },
         receive: { model, update, sink in model.receive(update.result, sink: sink) }
     )
     @ObservationIgnored

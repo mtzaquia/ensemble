@@ -43,12 +43,32 @@ extension Ensemble {
     /// - Parameter sources: The independent `ViewData` instances to reload.
     @MainActor
     public static func reload<each Value>(_ sources: repeat ViewData<each Value>) async {
+        await reload(reason: nil, repeat each sources)
+    }
+
+    /// Calls each source's reasoned reload concurrently and waits for every request action.
+    ///
+    /// Each source behaves as it would for an individual `reload(reason)` call. Repeated
+    /// instances reload once.
+    @MainActor
+    public static func reload<each Value>(
+        _ reason: ViewDataReloadReason,
+        _ sources: repeat ViewData<each Value>
+    ) async {
+        await reload(reason: reason, repeat each sources)
+    }
+
+    @MainActor
+    private static func reload<each Value>(
+        reason: ViewDataReloadReason?,
+        _ sources: repeat ViewData<each Value>
+    ) async {
         guard !Task.isCancelled else { return }
         await withTaskGroup(of: Void.self) { group in
             var identities: Set<ObjectIdentifier> = []
             func enqueue<Chunk>(_ source: ViewData<Chunk>) {
                 guard identities.insert(ObjectIdentifier(source)).inserted else { return }
-                group.addTask { await source.reload() }
+                group.addTask { await source.reload(reason: reason) }
             }
             repeat enqueue(each sources)
         }

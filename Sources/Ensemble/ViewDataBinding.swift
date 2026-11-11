@@ -31,7 +31,7 @@ final class ViewDataBinding<Value> {
     // Resolve weak owners before entering loading, then retain them only for the request.
     private enum ReloadBehavior {
         case resubscribe
-        case refresh(@MainActor () -> (@MainActor () async -> Void)?)
+        case refresh(@MainActor (ViewDataReloadReason) -> (@MainActor () async -> Void)?)
         case loadable
         case disabled
 
@@ -79,7 +79,7 @@ final class ViewDataBinding<Value> {
         declaration: String,
         id: @escaping @MainActor (Owner) -> ID,
         make: @escaping @MainActor (Owner) -> Source,
-        refresh: (@MainActor (Owner) async -> Void)?,
+        refresh: (@MainActor (Owner, ViewDataReloadReason) async -> Void)?,
         allowsReload: Bool,
         receive: @escaping @MainActor (Owner, Source.Element, ViewDataSink<Value>) -> Void
     ) {
@@ -87,9 +87,9 @@ final class ViewDataBinding<Value> {
         if !allowsReload {
             reloadBehavior = .disabled
         } else if let refresh {
-            reloadBehavior = .refresh { [weak owner] in
+            reloadBehavior = .refresh { [weak owner] reason in
                 guard let owner else { return nil }
-                return { await refresh(owner) }
+                return { await refresh(owner, reason) }
             }
         } else {
             reloadBehavior = .resubscribe
@@ -186,20 +186,20 @@ final class ViewDataBinding<Value> {
         }
     }
 
-    private func activate(reason: EnsembleConnectionReason) {
+    private func activate(reason: EnsembleConnectionReason, startsInitialLoad: Bool = true) {
         activationTask?.cancel()
         activationTask = nil
         guard isActive, !isConnected else { return }
         updateIdentityIfNeeded()
         guard isActive else { return }
-        start(reason: reason)
+        start(reason: reason, startsInitialLoad: startsInitialLoad)
         canJoinInitialLoad = task != nil
     }
 
-    func reload(trigger: EnsembleReloadTrigger = .reload) async {
+    func reload(reason: ViewDataReloadReason?, trigger: EnsembleReloadTrigger = .reload) async {
         guard !Task.isCancelled, isActive else { return }
         if case .disabled = reloadBehavior { return }
-        activate(reason: .reload)
+        activate(reason: .reload, startsInitialLoad: reason == nil)
         guard isConnected, let destination else { return }
         updateIdentityIfNeeded()
         guard isActive else { return }
@@ -216,7 +216,7 @@ final class ViewDataBinding<Value> {
             }
             await waitForConnection(task)
         case .refresh(let prepare):
-            guard let refresh = prepare() else { return }
+            guard let refresh = prepare(reason ?? .automatic) else { return }
             ensembleLog.ensembleDebug(.reloadRequested(
                 source: logSource, generation: revision, mode: .refresh, trigger: trigger
             ))
@@ -233,27 +233,27 @@ final class ViewDataBinding<Value> {
                 if loadingToken == token { loadingToken = nil }
             }
         case .loadable:
-            await reloadLoadable(trigger: trigger)
+            await reloadLoadable(reason: reason, trigger: trigger)
         case .disabled:
             break
         }
     }
 
-    private func reloadLoadable(trigger: EnsembleReloadTrigger) async {
+    private func reloadLoadable(reason: ViewDataReloadReason?, trigger: EnsembleReloadTrigger) async {
         guard !Task.isCancelled else { return }
         ensembleLog.ensembleDebug(.reloadRequested(
             source: logSource, generation: revision, mode: .loadable, trigger: trigger
         ))
-        if needsRebind { start(reason: .identityChanged) }
+        if needsRebind { start(reason: .identityChanged, startsInitialLoad: reason == nil) }
         let request: Task<Void, Never>?
-        if trigger == .reload, let initialLoad, !initialLoad.isCancelled {
+        if reason == nil, let initialLoad, !initialLoad.isCancelled {
             ensembleLog.ensembleDebug(.reloadJoinedInitial(source: logSource, generation: revision))
             request = initialLoad
         } else {
             if task == nil || connectionValidity?.isValid == false {
                 reconnect(startsLoading: false, reason: .completedSource)
             }
-            request = startLoad(.reload)
+            request = startLoad(.reload(reason ?? .automatic))
         }
         guard let request else { return }
         await withTaskCancellationHandler {
@@ -312,7 +312,7 @@ final class ViewDataBinding<Value> {
         loadableSource = nil
     }
 
-    private func start(reason: EnsembleConnectionReason) {
+    private func start(reason: EnsembleConnectionReason, startsInitialLoad: Bool = true) {
         switch reloadBehavior {
         case .resubscribe, .disabled:
             reconnect(startsLoading: true, reason: reason)
@@ -320,7 +320,7 @@ final class ViewDataBinding<Value> {
             reconnect(startsLoading: false, reason: reason)
         case .loadable:
             reconnect(startsLoading: false, reason: reason)
-            initialLoad = startLoad(.initial)
+            if startsInitialLoad { initialLoad = startLoad(.initial) }
         }
     }
 
@@ -343,7 +343,7 @@ final class ViewDataBinding<Value> {
                 self.retryRevision &+= 1
                 let request = self.retryRevision
                 self.retryTask = Task { [weak self] in
-                    await self?.reload(trigger: .retry)
+                    await self?.reload(reason: .userInitiated, trigger: .retry)
                     if let self, self.retryRevision == request { self.retryTask = nil }
                 }
             })

@@ -33,11 +33,11 @@ AsyncContent(viewModel.entries) { entries, _ in
 ## Install
 
 Ensemble requires Swift 6.3 and supports iOS 17+ and macOS 14+. It is available through Swift
-Package Manager. Pin `3.0.0-beta.2` to try the v3 APIs.
+Package Manager. Pin `3.0.0-beta.3` to try the v3 APIs.
 
 ```swift
 dependencies: [
-  .package(url: "https://github.com/mtzaquia/ensemble.git", exact: "3.0.0-beta.2"),
+  .package(url: "https://github.com/mtzaquia/ensemble.git", exact: "3.0.0-beta.3"),
 ]
 ```
 
@@ -121,7 +121,7 @@ Cold sources fetch through their sequence and resubscribe when `await entries.re
 
 Use `@ViewDataSource(updates:)` when the producer owns its cached value, update sequence, and load
 policies. Its `ViewDataLoadableSource` conformance supplies the seed on first read. Connection
-subscribes and calls `viewDataLoad(.initial)`, and later reloads and retries pass `.reload` to
+subscribes and calls `viewDataLoad(.initial)`, and later reloads and retries pass `.reload(reason)` to
 the same producer. See the [loadable sources guide](docs/source-backed-data.md#loadable-sources) for a
 Continuum conformance.
 
@@ -151,6 +151,8 @@ await Ensemble.reload(viewModel.profile, viewModel.activity, viewModel.notificat
 The batch starts requests concurrently, waits for all actions, and lets each chunk present its own
 failure. Each call behaves like `await data.reload()` and propagates caller cancellation.
 Finishing a request keeps the model-owned subscription alive for later updates.
+Pass `.userInitiated` as the first argument to a batch or as the argument to an individual
+reload when it responds to a user gesture. See [Reload reasons](docs/sources-and-lifecycle.md#reload-reasons).
 
 Declare source identity separately from source construction:
 

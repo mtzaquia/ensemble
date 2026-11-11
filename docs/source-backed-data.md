@@ -18,7 +18,7 @@ final class EntriesModel {
     id: \.selectedFilter,
     initial: { (model: Self) in model.repository.cachedAvailability },
     make: { model in model.repository.values(for: model.selectedFilter) },
-    refresh: { model in await model.repository.reload(for: model.selectedFilter) }
+    refresh: { model, _ in await model.repository.reload(for: model.selectedFilter) }
   )
   @ObservationIgnored
   var entries: ViewData<[Entry]>
@@ -90,8 +90,9 @@ that registers asynchronously should buffer or replay updates until the subscrip
 | --- | --- |
 | First property read | Create the producer and read its availability once. The producer stays dormant. |
 | Connection | `AsyncContent`, `connect()`, or a first `reload()` subscribes and requests `.initial`. |
-| Reload | Join an in-flight initial request, or await `.reload` on the current producer. |
-| Failure retry | Request `.reload` on the current producer, including when the initial request is still in flight. |
+| Bare reload | Join an in-flight initial request, or await `.reload(.automatic)` on the current producer. |
+| Reload with a reason | Subscribe if needed and request `.reload(reason)`, including when this is the first request or an initial request is already in flight. |
+| Failure retry | Request `.reload(.userInitiated)` on the current producer, including when the initial request is still in flight. |
 | Completed subscription | A new reload or retry creates another iterator on the same producer before loading. |
 | Identity change | For a connected source, cancel old work, create the new producer, apply its availability, subscribe, and request `.initial`. A dormant source resolves the current identity at connection. |
 | Owner release | Cancel the subscription and all in-flight loads. Late outcomes and old sinks are ignored. |
@@ -130,12 +131,20 @@ extension Composition: @retroactive ViewDataLoadableSource {
   }
 
   public func viewDataLoad(_ request: ViewDataLoadRequest) async {
-    await load(using: request == .initial ? .cached : .remote)
+    let policy: LoadPolicy = switch request {
+    case .initial, .reload(.automatic): .cached
+    case .reload(.userInitiated): .cachedThenRemote
+    }
+    await load(using: policy)
   }
 }
 ```
 
 This conformance covers every `Composition<Output>`. The policy choice is app-owned.
+Continuum forwards the policy to the composition's inputs. With `staleAfter` configured,
+automatic refreshes can validate stale snapshots remotely while reusing fresh ones.
+In this example, user-initiated refreshes request remote data through `.cachedThenRemote`,
+which can share in-flight work.
 A Continuum `BucketPartition` can use the same pattern with `Space.Snapshot` and its
 throwing `load(using:)`, which reports outcomes through observation. An unpartitioned
 `Bucket` can supply its own snapshot directly. For a partitioned bucket, return the selected
@@ -223,7 +232,7 @@ and a connection-scoped sink:
 ```swift
 @ViewDataSource(
   make: { (model: Self) in model.displayUser.updates() },
-  refresh: { model in await model.displayUser.reload() },
+  refresh: { model, _ in await model.displayUser.reload() },
   receive: { model, update, sink in
     switch update {
     case .result(let result):
@@ -301,7 +310,7 @@ event and model effects.
   `context.reload(data)` with `await data.reload()`. Use `await Ensemble.reload(...)` for independent
   concurrent screen requests.
 - Map `.resubscribe` to an omitted `refresh` argument, `.refresh(action)` to an owner-aware
-  `refresh: { owner in await owner.reload() }`, and `.disabled` to `allowsReload: false` on the macro.
+  `refresh: { owner, _ in await owner.reload() }`, and `.disabled` to `allowsReload: false` on the macro.
   Hot refresh closures should await the producer's actual work.
 - Replace `transitionAnimation:` on `AsyncContent` with `.phaseAnimation(...)` on the instance or
   an enclosing view. Phase animation is now opt-in; same-phase content animation remains caller-owned.

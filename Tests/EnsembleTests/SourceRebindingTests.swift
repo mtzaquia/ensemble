@@ -223,7 +223,7 @@ private final class RebindingModel {
         id: \.connectionID,
         initial: { (model: Self) in .available(model.seedInput) },
         make: { (model: Self) in model.source.values(for: model.selectedQuery) },
-        refresh: { model in
+        refresh: { model, _ in
             _ = model.callbackInput
             model.source.refresh(for: model.selectedQuery)
         },

@@ -26,9 +26,9 @@
 /// creates a fresh subscription or refreshes the active subscription's producer. A binding with
 /// disabled reload exposes no action instead.
 ///
-/// Calling the action starts a main actor-isolated reload task owned by the binding. Replacing
-/// the connection or releasing its owning model cancels that retry task. Direct callers that need
-/// to await completion should use `await data.reload()` instead.
+/// Calling the action starts a main actor-isolated reload task with reason `.userInitiated`.
+/// Replacing the connection or releasing its owning model cancels that retry task. Direct callers
+/// can use `await data.reload(.userInitiated)` to await a user-initiated reload.
 public struct ViewDataRetryAction {
     private let action: @MainActor () -> Void
 

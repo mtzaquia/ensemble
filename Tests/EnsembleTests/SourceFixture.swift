@@ -55,7 +55,7 @@ final class SourceFixture<Value, Source: AsyncSequence> {
         id: \.sourceID,
         initial: { (model: Self) in model.initial },
         make: { model in model.factory() },
-        refresh: { model in await model.refreshAction?() },
+        refresh: { model, _ in await model.refreshAction?() },
         receive: { model, element, sink in model.adapter(model, element, sink) }
     )
     private var hot: ViewData<Value>

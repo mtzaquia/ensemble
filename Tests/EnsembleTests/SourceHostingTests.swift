@@ -174,7 +174,7 @@ private final class HostedModel {
         id: \.sourceID,
         initial: { (model: Self) in model.initial },
         make: { (model: Self) in model.useCase.values() },
-        refresh: { model in await model.useCase.reload() }
+        refresh: { model, _ in await model.useCase.reload() }
     )
     @ObservationIgnored
     var data: ViewData<Int>

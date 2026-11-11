@@ -79,7 +79,7 @@ struct ViewDataSourceMacroTests {
                 @ViewDataSource(
                     \(keyed ? "id: \\.filterID,\n        " : "")initial: { (model: Self) in model.initial() },
                     make: { model in model.values() },
-                    refresh: { model in await model.reload() },
+                    refresh: { model, _ in await model.reload() },
                     allowsReload: false,
                     receive: { (model: Self, result, sink) in model.receive(result, sink: sink) }
                 )
@@ -103,7 +103,7 @@ struct ViewDataSourceMacroTests {
                             make: { model in
                                 model.values()
                             },
-                            refresh: { model in
+                            refresh: { model, _ in
                                 await model.reload()
                             },
                             allowsReload: false,
@@ -193,7 +193,7 @@ struct ViewDataSourceMacroTests {
         "make: { [weak self] (model: Model) in model.values() }",
         "make: { (model: Model) in model.values { self.reload() } }",
         "make: { (model: Model) in super.values() }",
-        "make: { (model: Model) in model.values() }, refresh: { model in self.reload() }",
+        "make: { (model: Model) in model.values() }, refresh: { model, _ in self.reload() }",
         "make: { (model: Model) in model.values() }, receive: { _, value, sink in self.apply(value) }",
         "initial: { (model: Model) in self.initial() }, make: { model in model.values() }",
     ])

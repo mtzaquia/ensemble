@@ -1,8 +1,12 @@
 # Release notes
 
-## Unreleased
+## v3.0.0-beta.3
 
 - Rename the loadable producer requirement to `viewDataLoad(_:)`.
+- Pass `.automatic` or `.userInitiated` to individual or batch reloads. Loadable producers
+  receive the reason in `ViewDataLoadRequest.reload(_:)`. Retry is user-initiated.
+- Update hot-source `refresh:` closures to take the owner and reload reason. Use
+  `{ owner, _ in … }` when the refresh behaves the same for both reasons.
 
 ## v3.0.0-beta.2
 

@@ -59,8 +59,8 @@
 /// - Parameters:
 ///   - initial: An optional synchronous owner-derived seed, evaluated once on first read.
 ///   - make: A prompt, untracked factory that builds the source.
-///   - refresh: An optional async action that awaits a hot producer's work. Without one, reload
-///     cancels and resubscribes; ongoing streams should provide this action.
+///   - refresh: An optional async action that receives the owner and reload reason and awaits
+///     the hot producer's work. Without it, reload cancels and resubscribes.
 ///   - allowsReload: Whether explicit reloads and failure retries are enabled.
 ///   - receive: An optional owner-dependent adapter; omit it to apply each result directly.
 @attached(accessor, names: named(get))
@@ -68,7 +68,7 @@
 public macro ViewDataSource<Owner: AnyObject, Value, Source: AsyncSequence, SourceError: Error>(
     initial: (@MainActor (Owner) -> ViewDataAvailability<Value>)? = nil,
     make: @escaping @MainActor (Owner) -> Source,
-    refresh: (@MainActor (Owner) async -> Void)? = nil,
+    refresh: (@MainActor (Owner, ViewDataReloadReason) async -> Void)? = nil,
     allowsReload: Bool = true,
     receive: (@MainActor (Owner, Source.Element, ViewDataSink<Value>) -> Void)? = nil
 ) = #externalMacro(module: "EnsembleMacros", type: "ViewDataSourceMacro")
@@ -83,7 +83,7 @@ where Source.Element == Result<Value, SourceError>
 /// - Parameters:
 ///   - initial: An optional synchronous owner-derived seed, evaluated once on first read.
 ///   - make: A prompt, untracked factory that builds the source.
-///   - refresh: An optional async action that awaits a hot producer's work.
+///   - refresh: An optional async action that receives the owner and reload reason.
 ///   - allowsReload: Whether explicit reloads and failure retries are enabled.
 ///   - receive: Translates an element using the owner and a connection-scoped sink.
 @attached(accessor, names: named(get))
@@ -91,7 +91,7 @@ where Source.Element == Result<Value, SourceError>
 public macro ViewDataSource<Owner: AnyObject, Value, Source: AsyncSequence>(
     initial: (@MainActor (Owner) -> ViewDataAvailability<Value>)? = nil,
     make: @escaping @MainActor (Owner) -> Source,
-    refresh: (@MainActor (Owner) async -> Void)? = nil,
+    refresh: (@MainActor (Owner, ViewDataReloadReason) async -> Void)? = nil,
     allowsReload: Bool = true,
     receive: @escaping @MainActor (Owner, Source.Element, ViewDataSink<Value>) -> Void
 ) = #externalMacro(module: "EnsembleMacros", type: "ViewDataSourceMacro")
@@ -112,7 +112,7 @@ public macro ViewDataSource<Owner: AnyObject, Value, Source: AsyncSequence>(
 ///   - id: A key-path literal projecting the connection's `Equatable` identity from its owner.
 ///   - initial: An optional synchronous owner-derived seed, evaluated once on first read.
 ///   - make: A prompt, untracked factory that builds the source for the current identity.
-///   - refresh: An optional async action that awaits a hot producer's work.
+///   - refresh: An optional async action that receives the owner and reload reason.
 ///   - allowsReload: Whether explicit reloads and failure retries are enabled.
 ///   - receive: An optional owner-dependent adapter; omit it to apply each result directly.
 @attached(accessor, names: named(get))
@@ -121,7 +121,7 @@ public macro ViewDataSource<Owner: AnyObject, ID: Equatable, Value, Source: Asyn
     id: KeyPath<Owner, ID>,
     initial: (@MainActor (Owner) -> ViewDataAvailability<Value>)? = nil,
     make: @escaping @MainActor (Owner) -> Source,
-    refresh: (@MainActor (Owner) async -> Void)? = nil,
+    refresh: (@MainActor (Owner, ViewDataReloadReason) async -> Void)? = nil,
     allowsReload: Bool = true,
     receive: (@MainActor (Owner, Source.Element, ViewDataSink<Value>) -> Void)? = nil
 ) = #externalMacro(module: "EnsembleMacros", type: "ViewDataSourceMacro")
@@ -136,7 +136,7 @@ where Source.Element == Result<Value, SourceError>
 ///   - id: A key-path literal projecting the connection's `Equatable` identity from its owner.
 ///   - initial: An optional synchronous owner-derived seed, evaluated once on first read.
 ///   - make: A prompt, untracked factory that builds the source for the current identity.
-///   - refresh: An optional async action that awaits a hot producer's work.
+///   - refresh: An optional async action that receives the owner and reload reason.
 ///   - allowsReload: Whether explicit reloads and failure retries are enabled.
 ///   - receive: Translates an element using the owner and a connection-scoped sink.
 @attached(accessor, names: named(get))
@@ -145,7 +145,7 @@ public macro ViewDataSource<Owner: AnyObject, ID: Equatable, Value, Source: Asyn
     id: KeyPath<Owner, ID>,
     initial: (@MainActor (Owner) -> ViewDataAvailability<Value>)? = nil,
     make: @escaping @MainActor (Owner) -> Source,
-    refresh: (@MainActor (Owner) async -> Void)? = nil,
+    refresh: (@MainActor (Owner, ViewDataReloadReason) async -> Void)? = nil,
     allowsReload: Bool = true,
     receive: @escaping @MainActor (Owner, Source.Element, ViewDataSink<Value>) -> Void
 ) = #externalMacro(module: "EnsembleMacros", type: "ViewDataSourceMacro")

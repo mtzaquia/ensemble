@@ -120,7 +120,7 @@ struct IndependentSectionsExample: View {
 private final class IndependentSectionsViewModel {
     @ViewDataSource(
         make: { (model: Self) in model.useCase.activityValues() },
-        refresh: { model in await model.useCase.reloadActivity() }
+        refresh: { model, _ in await model.useCase.reloadActivity() }
     )
     @ObservationIgnored
     var activity: ViewData<[SampleEntry]>
@@ -128,14 +128,14 @@ private final class IndependentSectionsViewModel {
     @ViewDataSource(
         initial: { _ in .available(SampleEntry.cached) },
         make: { (model: Self) in model.useCase.accountValues() },
-        refresh: { model in await model.useCase.reloadAccount() }
+        refresh: { model, _ in await model.useCase.reloadAccount() }
     )
     @ObservationIgnored
     var account: ViewData<[SampleEntry]>
 
     @ViewDataSource(
         make: { (model: Self) in model.useCase.tipValues() },
-        refresh: { model in await model.useCase.reloadTip() }
+        refresh: { model, _ in await model.useCase.reloadTip() }
     )
     @ObservationIgnored
     var tip: ViewData<String>

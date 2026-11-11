@@ -108,7 +108,7 @@ private final class ContextModel {
             return .available(1)
         },
         make: { model in model.values() },
-        refresh: { model in await model.refresh() },
+        refresh: { model, _ in await model.refresh() },
         receive: { model, result, sink in
             model.receiveContexts.append(SourceContext.name)
             sink.receive(result)

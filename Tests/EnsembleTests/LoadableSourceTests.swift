@@ -90,11 +90,71 @@ struct LoadableSourceTests {
         #expect(data.phase.kind == .empty)
 
         try await load(data, source: source, at: 1)
-        #expect(source.requests == [.initial, .reload])
+        #expect(source.requests == [.initial, .reload(.automatic)])
         #expect(source.subscriptionAtRequest == [1, 1])
         #expect(model.producers.count == 1)
         try await observeChange(in: data) { source.send(.outcome(.success(42))) }
         #expect(data.latestValue == .available(42))
+    }
+
+    @Test("An explicit reason reaches the producer while the initial load is active", arguments: [
+        ViewDataReloadReason.automatic, .userInitiated,
+    ])
+    func reasonedReloadDuringInitialLoad(reason: ViewDataReloadReason) async throws {
+        let model = LoadableModel()
+        defer { withExtendedLifetime(model) {} }
+        let data = model.data
+        let source = try #require(model.producers.first)
+        data.connect()
+        try await source.events.wait(.started(0))
+
+        let callers = LoadEvents()
+        let reload = Task {
+            await data.reload(reason)
+            callers.record(.finished(0))
+        }
+        defer { reload.cancel() }
+        try await source.events.wait(.started(1))
+        #expect(source.requests == [.initial, .reload(reason)])
+        #expect(source.subscriptionAtRequest == [1, 1])
+        source.finishLoad(1)
+        try await callers.wait(.finished(0))
+        #expect(!source.events.contains(.finished(0)))
+        source.finishLoad(0)
+    }
+
+    @Test("A reasoned batch forwards the reason to loadable and hot sources", arguments: [
+        ViewDataReloadReason.automatic, .userInitiated,
+    ])
+    func batchReloadReasons(reason: ViewDataReloadReason) async throws {
+        let model = LoadableModel()
+        defer { withExtendedLifetime(model) {} }
+        let data = model.data
+        let hot = model.hot
+        let source = try #require(model.producers.first)
+        let callers = LoadEvents()
+        let reload = Task {
+            await Ensemble.reload(reason, data, hot, data)
+            callers.record(.finished(0))
+        }
+        defer { reload.cancel() }
+        try await source.events.wait(.started(0))
+        try await model.hotEvents.wait(.finished(0))
+        #expect(source.requests == [.reload(reason)])
+        #expect(source.subscriptionAtRequest == [1])
+        #expect(model.hotReasons == [reason])
+        source.finishLoad(0)
+        try await callers.wait(.finished(0))
+
+        await hot.reload()
+        #expect(model.hotReasons == [reason, .automatic])
+        try await observeChange(in: hot) {
+            model.hotUpdates.continuation.yield(.failure(Offline()))
+        }
+        let retry = try #require(hot.retryAction)
+        retry()
+        try await model.hotEvents.wait(.finished(2))
+        #expect(model.hotReasons == [reason, .automatic, .userInitiated])
     }
 
     @Test("Failure retains success, retry reloads, and a native reset clears success")
@@ -112,7 +172,7 @@ struct LoadableSourceTests {
         let retry = try #require(data.retryAction)
         retry()
         try await source.events.wait(.started(1))
-        #expect(source.requests == [.initial, .reload])
+        #expect(source.requests == [.initial, .reload(.userInitiated)])
         #expect(source.subscriptionAtRequest == [1, 1])
         source.finishLoad(0)
         source.finishLoad(1)
@@ -134,7 +194,7 @@ struct LoadableSourceTests {
         let retry = try #require(data.retryAction)
         retry()
         try await source.events.wait(.started(1))
-        #expect(source.requests == [.initial, .reload])
+        #expect(source.requests == [.initial, .reload(.userInitiated)])
         #expect(source.subscriptionAtRequest == [1, 2])
         #expect(model.producers.count == 1)
         #expect(source.availabilityReads == 1)
@@ -220,7 +280,7 @@ struct LoadableSourceTests {
         await data.reload()
         #expect(data.latestValue == .available(7))
         #expect(data.retryAction == nil)
-        #expect(source.requests == [.initial, .reload])
+        #expect(source.requests == [.initial, .reload(.userInitiated)])
     }
 
     @Test("A fixed source can override native element handling")
@@ -248,7 +308,7 @@ struct LoadableSourceTests {
         try await callers.wait(.finished(0))
     }
 
-    private func observeChange(in data: ViewData<Int>, send: () -> Void) async throws {
+    private func observeChange<Value>(in data: ViewData<Value>, send: () -> Void) async throws {
         let (stream, continuation) = AsyncStream<Void>.makeStream()
         withObservationTracking {
             _ = data.phase
@@ -268,6 +328,9 @@ private final class LoadableModel {
     @ObservationIgnored private(set) var producers: [LoadProducer<Int>] = []
     @ObservationIgnored var received: [Int] = []
     let events = LoadEvents()
+    let hotEvents = LoadEvents()
+    let hotUpdates = AsyncStream<Result<String, Offline>>.makeStream()
+    @ObservationIgnored private(set) var hotReasons: [ViewDataReloadReason] = []
     private let seeds: [Int: ViewDataAvailability<Int>]
 
     init(seeds: [Int: ViewDataAvailability<Int>] = [:]) { self.seeds = seeds }
@@ -285,6 +348,15 @@ private final class LoadableModel {
         }
     )
     @ObservationIgnored var adapted: ViewData<Int>
+
+    @ViewDataSource(
+        make: { (model: Self) in model.hotUpdates.stream },
+        refresh: { model, reason in
+            model.hotReasons.append(reason)
+            model.hotEvents.record(.finished(model.hotReasons.count - 1))
+        }
+    )
+    @ObservationIgnored var hot: ViewData<String>
 
     private func makeProducer() -> LoadProducer<Int> {
         let producer = LoadProducer(seeds[id] ?? .unavailable)

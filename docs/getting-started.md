@@ -78,7 +78,7 @@ need a separate action that publishes through their existing subscription:
 ```swift
 @ViewDataSource(
   make: { (model: Self) in model.useCase.values() },
-  refresh: { model in await model.useCase.refresh() }
+  refresh: { model, _ in await model.useCase.refresh() }
 )
 var entries: ViewData<[Entry]>
 ```
@@ -100,7 +100,7 @@ SwiftUI can await the producer's request directly:
 
 ```swift
 .refreshable {
-  await viewModel.entries.reload()
+  await viewModel.entries.reload(.userInitiated)
 }
 ```
 
@@ -114,14 +114,14 @@ completed sequence.
 Keep one screen-level request method even when the data properties have different value types:
 
 ```swift
-func reload() async {
-  await Ensemble.reload(profile, activity, notifications)
+func reload(_ reason: ViewDataReloadReason) async {
+  await Ensemble.reload(reason, profile, activity, notifications)
 }
 ```
 
 ```swift
-.task { await viewModel.reload() }
-.refreshable { await viewModel.reload() }
+.task { await viewModel.reload(.automatic) }
+.refreshable { await viewModel.reload(.userInitiated) }
 ```
 
 The batch starts requests concurrently and waits for every action. Each chunk handles its own

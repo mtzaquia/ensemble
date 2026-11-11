@@ -10,7 +10,7 @@ data without subscription tasks, observation modifiers, or consumer leases.
 @ViewDataSource(
   initial: { (model: Self) in model.useCase.cachedAvailability },
   make: { model in model.useCase.values() },
-  refresh: { model in await model.useCase.reload() }
+  refresh: { model, _ in await model.useCase.reload() }
 )
 @ObservationIgnored
 var entries: ViewData<[Entry]>
@@ -74,19 +74,38 @@ first-paint content independently of stream timing. Idle hot sources are not mar
 an explicit refresh; cold sources begin loading on activation. Reload preserves successful content.
 
 A [loadable producer](source-backed-data.md#loadable-sources) supplies its availability on first
-read. On connection, Ensemble subscribes and requests `.initial`. Reload joins that request while
-it is running. Subsequent reloads and retries call `viewDataLoad(.reload)` on the same producer,
-resubscribing if needed. Reload waits for the load action, and the stream stays active.
+read. On connection, Ensemble subscribes and requests `.initial`. A bare reload joins that request
+while it is running. Later reloads and retries reuse the producer, resubscribing if needed.
+Reload waits for the load action, and the stream stays active.
+
+### Reload reasons
+
+Pass `.automatic` for an application-driven refresh or `.userInitiated` for a user gesture.
+Bare `reload()` uses `.automatic` when it starts a refresh. Retry uses `.userInitiated`.
+Loadable producers receive `.reload(reason)`. When you pass a reason explicitly, it reaches
+the producer even if initial work is already running or the source has yet to connect.
+Hot refresh closures receive the owner and the reason. Use `{ model, _ in … }` when
+the refresh behaves the same for both reasons.
+
+```swift
+@ViewDataSource(
+  make: { (model: Self) in model.useCase.updates() },
+  refresh: { model, reason in await model.useCase.refresh(reason) }
+)
+@ObservationIgnored
+var entries: ViewData<[Entry]>
+```
 
 ## Reload several sources together
 
 ```swift
 await Ensemble.reload(model.profile, model.activity, model.notifications)
+await Ensemble.reload(.userInitiated, model.profile, model.activity, model.notifications)
 ```
 
 The sources can hold different value types. This convenience calls each source's `reload()`
-concurrently through a task group and awaits all actions, with the same behavior as individual
-calls. Each source applies its own results, failures, and resets. A failure does not cancel its
+concurrently through a task group and awaits all actions. A reason supplied to the batch is
+forwarded to each reload. Each source applies its own results, failures, and resets. A failure does not cancel its
 siblings or throw from the batch; retry remains local. Completion means the actions finished,
 not that every source succeeded or every stream outcome has been processed.
 
@@ -113,7 +132,7 @@ enum EntriesUpdate {
 
 @ViewDataSource(
   make: { (model: Self) in model.useCase.updates() },
-  refresh: { model in await model.useCase.reload() },
+  refresh: { model, _ in await model.useCase.reload() },
   receive: { _, update, sink in
     switch update {
     case .result(let result): sink.receive(result)

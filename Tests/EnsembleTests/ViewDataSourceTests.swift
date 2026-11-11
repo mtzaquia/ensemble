@@ -282,7 +282,7 @@ private final class SourceModel {
         id: \.sourceID,
         initial: { (model: Self) in model.initial },
         make: { (model: Self) in model.useCase.values() },
-        refresh: { model in model.useCase.reload() }
+        refresh: { model, _ in model.useCase.reload() }
     )
     @ObservationIgnored
     var value: ViewData<Int>
@@ -291,7 +291,7 @@ private final class SourceModel {
         id: \.sourceID,
         initial: { _ in .available(7) },
         make: { (model: Self) in model.useCase.values() },
-        refresh: { (model: Self) in model.useCase.reload() }
+        refresh: { (model: Self, _: ViewDataReloadReason) in model.useCase.reload() }
     )
     @ObservationIgnored
     var seeded: ViewData<Int>
@@ -299,7 +299,7 @@ private final class SourceModel {
     @ViewDataSource(
         id: \.sourceID,
         make: { (model: Self) in model.useCase.values() },
-        refresh: { model in model.useCase.reload() }
+        refresh: { model, _ in model.useCase.reload() }
     )
     @ObservationIgnored
     var empty: ViewData<Int>
