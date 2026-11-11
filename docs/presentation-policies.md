@@ -157,9 +157,8 @@ An initializer without a failure builder accepts `AsyncContentFailureFallbackPol
 The default is `.retained`. Separate policy types prevent selecting failure content when no failure
 builder exists.
 
-The optional retry action uses the binding's configured
-[reload behavior](sources-and-lifecycle.md#reload-hot-and-cold-sources). It is absent for
-one-shot loads, `.disabled` bindings, and cancelled bindings.
+Connected sources that support reload supply an optional retry action. It uses the binding's
+[reload behavior](sources-and-lifecycle.md#reload-sources).
 
 ## Render optional values
 
@@ -278,19 +277,11 @@ The revision advances for an unequal replacement of an available successful valu
 advance after the first value. First success, reset, first success after reset, lifecycle, failure,
 and retry changes do not advance it. Values from different `ViewData` instances compare unequal.
 
-`latestValueRevision` follows whole-value equality, not collection identity. When only insertion,
-removal, and reordering should trigger animation, attach an ID projection where the collection value
-is available:
-
-```swift
-ForEach(entries) { entry in
-  EntryRow(entry: entry)
-}
-.animation(.snappy, value: entries.map(\.id))
-```
-
-Both forms work with `List`, `VStack`, `LazyVStack`, and other containers because `AsyncContent`
-does not commit content-to-content changes in a separate transaction.
+`latestValueRevision` follows whole-value equality. To animate insertion, removal, and
+reordering based on stable IDs, derive an ID array from `latestValue` and use it as the animation
+key on the enclosing layout container. In a `List`, the container performs the structural diff.
+A key derived directly from availability can also change on first success and reset. Use the
+revision when those transitions should follow the separate phase-animation policy.
 
 Use `phase.kind` separately when a larger view should respond to lifecycle rather than data.
 

@@ -11,8 +11,8 @@
 features.
 
 A `ViewData` value remembers successful data and its current lifecycle phase. Declare its source
-with `@ViewDataSource`; `AsyncContent` connects it for the model’s lifetime. An optional `id` key
-path selects when to rebuild the source, while the same presentation state retains success.
+with `@ViewDataSource`. `AsyncContent` connects it for the model’s lifetime. An optional `id` key
+path selects when to rebuild the source while preserving the same `ViewData` instance.
 One-shot operations use `await entries.load(...)` on ordinary `ViewData`.
 
 - Seed presentation state immediately, load one value, or bind a stream of updates.
@@ -33,11 +33,11 @@ AsyncContent(viewModel.entries) { entries, _ in
 ## Install
 
 Ensemble requires Swift 6.3 and supports iOS 17+ and macOS 14+. It is available through Swift
-Package Manager. Version `3.0.0-beta.1` is a prerelease of v3; the APIs below are not in v2.
+Package Manager. Pin `3.0.0-beta.2` to try the v3 APIs.
 
 ```swift
 dependencies: [
-  .package(url: "https://github.com/mtzaquia/ensemble.git", exact: "3.0.0-beta.1"),
+  .package(url: "https://github.com/mtzaquia/ensemble.git", exact: "3.0.0-beta.2"),
 ]
 ```
 
@@ -119,19 +119,27 @@ No context property, start method, or view task is needed for this path. For hot
 use-case outcomes; the model requests loading explicitly. Caching policy stays in the data layer.
 Cold sources fetch through their sequence and resubscribe when `await entries.reload()` is called.
 
+Use `@ViewDataSource(updates:)` when the producer owns its cached value, update sequence, and load
+policies. Its `ViewDataLoadableSource` conformance supplies the seed on first read. Connection
+subscribes and requests `.initial`, and later reloads and retries request `.reload` on the same
+producer. See the [loadable sources guide](docs/source-backed-data.md#loadable-sources) for a
+Continuum conformance.
+
 Source properties are get-only and seeded on first read. Reads stay passive. `AsyncContent`
 requests connection when rendered; badges and conditional gates can connect from model startup:
 
 ```swift
 func start() {
-  Ensemble.connect(profile, activity, notifications)
+  profile.connect()
+  activity.connect()
+  notifications.connect()
 }
 ```
 
-`data.connect()` and the batch convenience are synchronous, idempotent, and schedule startup outside
-the current call stack. They do not invoke a hot refresh action. Once connected, all consumers share
+`data.connect()` is synchronous and idempotent. It schedules startup outside the current call stack.
+Hot sources only subscribe on connection. Once connected, all consumers share
 the connection until the model is released.
-Every callback receives the weakly held model, including `receive(owner, element, sink)`.
+Macro callbacks receive the weakly held model, including `receive(owner, element, sink)`.
 The optional adapter is unnecessary for ordinary `Result` streams. In `@Observable` models, put `@ObservationIgnored` after `@ViewDataSource`.
 
 For a screen with several independent chunks, request them together:
@@ -160,8 +168,8 @@ preserve it, including its sinks and retry. `make` runs untracked, including pro
 Without `id`, source changes do not trigger automatic rebinding. Reload and retry keep their
 configured hot or cold behavior. Use a computed `Equatable` identity for multiple inputs,
 including mutable producer identity.
-Successful content remains in the same `ViewData`. Use `reset()` before changing an
-account or another domain identity when the previous value should be discarded.
+With `make:`, rebinding keeps successful content. Use `reset()` before changing an account when
+the previous value should be discarded. With `updates:`, the new producer supplies its own seed.
 See [Source-backed data and v3 migration](docs/source-backed-data.md).
 
 When adding skeletons, use `loading: .placeholder(...)` and redact only `source == .placeholder`.

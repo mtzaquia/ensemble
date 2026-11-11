@@ -22,10 +22,10 @@ the initial presentation is hidden. The factory must return promptly; expensive 
 its producer. Every later read returns the same data.
 
 A badge can read `model.entries.latestValue` directly without starting work. For badges or conditions
-that prevent `AsyncContent` from being constructed, call `entries.connect()` from model startup,
-or `Ensemble.connect(profile, activity, notifications)`. Both are synchronous and schedule startup
-outside the current call stack. Repeated calls share one connection without awaiting initial data
-or invoking hot refresh. `reload()` ensures startup itself before requesting work.
+that prevent `AsyncContent` from being constructed, call `connect()` on each needed `ViewData`
+from model startup. This schedules startup outside the current call stack. Repeated calls share
+one connection without awaiting initial data or invoking hot refresh. `reload()` ensures startup
+itself before requesting work.
 
 Connect explicitly for any source that needs updates before its `AsyncContent` renders, including
 nested sections starting alongside a parent and tests without a view. See the
@@ -52,9 +52,9 @@ Cancellation is cooperative with the producer.
 `reset()` clears presentation while leaving the model-owned source connected. Later updates may
 replace the empty state. Successful empty collections and optional `nil` count as available values.
 
-## Reload hot and cold sources
+## Reload sources
 
-Without a refresh action, activation starts the cold sequence. The first explicit reload joins a
+For a `make:` declaration without a refresh action, activation starts the cold sequence. The first explicit reload joins a
 pending initial load that has not yet produced an update. Later reloads cancel the previous
 subscription, invoke the factory again, and await sequence completion. A completed initial sequence
 is ready for a new request; repeated property reads alone never restart it. Cold sources that fetch
@@ -63,14 +63,20 @@ on activation need no extra startup reload merely to obtain their first value.
 With a refresh action, activation only subscribes. Reload keeps that subscription and awaits the
 producer's action. If the sequence has completed, Ensemble reconnects before calling the action.
 Hot factories must register their observation synchronously or buffer updates so an immediate
-refresh cannot lose its result. Connections remain alive after the action returns, so queued and
-ongoing updates continue to reach the data while its model lives. Action completion does not imply
-that every streamed outcome has already been processed.
+refresh cannot lose its result. If the action returns while its request is still loading,
+Ensemble restores the preceding failure, retained success, or empty state. Queued and ongoing
+updates continue to reach the data through the same subscription. Await the actual work in
+`refresh:` to keep the loading phase active while the producer works.
 
 Connecting or rebinding never invokes a hot source's refresh action. Initial requests, caching,
 and replay policy belong to the application or data layer. The synchronous seed guarantees
 first-paint content independently of stream timing. Idle hot sources are not marked loading until
 an explicit refresh; cold sources begin loading on activation. Reload preserves successful content.
+
+A [loadable producer](source-backed-data.md#loadable-sources) supplies its availability on first
+read. On connection, Ensemble subscribes and requests `.initial`. Reload joins that request while
+it is running. Subsequent reloads and retries call `load(.reload)` on the same producer,
+resubscribing if needed. Reload waits for the load action, and the stream stays active.
 
 ## Reload several sources together
 
@@ -91,10 +97,9 @@ Duplicate instances in one batch reload once.
 
 ### Overlapping requests
 
-Separate reload calls do not coalesce after the pending initial cold load has been joined.
-Hot sources may run their refresh action more than once; their producer decides how overlapping
-work is handled. A later cold reload cancels and replaces the earlier request. Awaiting that earlier
-request can finish while the newer request continues. Finishing one request does not stop another.
+Hot and loadable sources can run multiple reload requests. Their producer decides how to handle
+overlap. A cold reload after the initial request has been joined cancels and replaces the earlier
+request. Awaiting that earlier request can finish while the newer request continues.
 
 ## Adapt source-specific updates
 
@@ -126,7 +131,7 @@ clears presentation without stopping the source. A later source result can recov
 
 Adapters receive the owner, element, and sink. Use `_` for an unused owner. Sink changes apply
 synchronously, and reads made by the adapter do not become source-selection dependencies.
-Set `allowsReload: false` on the macro to suppress programmatic reload and failure retry while
+Set `allowsReload: false` on a `make:` declaration to suppress programmatic reload and failure retry while
 keeping activation and automatic rebinding.
 
 ## Track connection identity
@@ -134,16 +139,18 @@ keeping activation and automatic rebinding.
 Pass `id: \.selectedFilter` or a computed composite `Equatable` ID to the macro. Only that projection
 is observed; factory construction runs untracked, including producer-internal reads. Equal IDs
 renew dependencies without replacing sinks, retries, connections, or running requests. Changed IDs
-reject obsolete callbacks and rebuild on the main actor. The same data and successful content
-survive; hot sources reconnect without invoking refresh. Omit `id` for a fixed connection.
+reject obsolete callbacks and rebuild on the main actor. The same data survives. Sources declared
+with `make:` retain successful content, and hot sources reconnect without invoking refresh.
+Sources declared with `updates:` seed from the new producer and then request its initial load.
+Omit `id` for a fixed connection.
 
 Dependency tracking is renewed after notifications, including conditional branches. Completed
 sequences still track identity changes while their model lives. Unconnected declarations stay dormant;
 connecting selects the current identity. Owner teardown disarms pending callbacks and prevents
 further connections.
 
-Use `reset()` before changing an account or another domain identity if the old value is no longer
-appropriate. Seeds run once and are never reapplied on rebinding. See
+For a `make:` source, use `reset()` before changing a domain identity when the old value is
+no longer appropriate. Its `initial:` seed runs only on first access. See
 [Source-backed data](source-backed-data.md#rebind-through-connection-identity).
 
 ## Completion, errors, and cancellation
@@ -155,9 +162,10 @@ failure, retained success, or empty state. A previously emitted result keeps its
 
 Reload can reconnect a completed sequence. Cancelling an awaited cold reload stops that request
 and rejects its retained sinks; identity tracking remains active for future changes.
-Cancelling a hot refresh leaves its model-owned subscription intact. Owner teardown removes retry
-and settles only that connection's loading transition. Connection revisions reject obsolete updates
-without settling a newer one-shot load or replacement request.
+Cancelling a hot refresh or an awaited loadable request leaves its model-owned subscription
+intact. Owner teardown removes retry and settles only that connection's loading transition.
+Connection revisions reject obsolete updates without settling a newer one-shot load or replacement
+request.
 
 ## Load one value
 

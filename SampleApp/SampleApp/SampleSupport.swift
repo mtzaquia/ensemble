@@ -66,6 +66,18 @@ enum SampleFailure: LocalizedError, Sendable {
     }
 }
 
+// A sample response can arrive before or after its request begins waiting.
+@MainActor
+final class SampleGate {
+    private let completion = AsyncStream<Void>.makeStream()
+
+    func wait() async {
+        for await _ in completion.stream {}
+    }
+
+    func open() { completion.continuation.finish() }
+}
+
 struct DelayedSource<Value: Sendable> {
     let result: Result<Value, SampleFailure>
     var delay: Duration = .milliseconds(700)

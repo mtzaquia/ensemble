@@ -9,10 +9,12 @@ Main-actor isolation serializes access; it does not select task-local dependency
 | Callback | Execution context |
 | --- | --- |
 | `initial` | Synchronously in the first property reader's context, even if the source stays dormant |
-| `id` | When identity is evaluated for startup, a notification, or a subsequent result/reload check |
+| `id` | When identity is evaluated for startup, a notification, or a subsequent result/reload check. A loadable source also reads it with its first seed. |
 | `make` | The connection's startup or rebind context; a reload can start a connection directly |
 | `receive` | The sequence-consumption task created for that connection |
 | `refresh` | The task invoking reload; retry creates a task from the retry invocation |
+| `updates` and producer `availability` | The first reader's context, then the connection context when identity changes |
+| Producer `load(_:)` | A task created from startup, rebind, reload, or retry. Joining an in-flight request uses that request's existing task. |
 
 Tasks inherit the task-local values present when they are created. Storing a closure does not pin
 ambient task locals to the time it was declared or to the owner's initialization. Consequently,

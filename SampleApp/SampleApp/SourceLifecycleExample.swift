@@ -56,7 +56,7 @@ struct SourceLifecycleExample: View {
                     .accessibilityIdentifier("sample.source-lifecycle.deliver")
                 Button("Fail response", action: model.fail)
                     .accessibilityIdentifier("sample.source-lifecycle.fail")
-                Button("Reload") { Task { await model.entries.reload() } }
+                Button("Reload", action: model.reload)
                     .accessibilityIdentifier("sample.source-lifecycle.reload")
             }
 
@@ -104,6 +104,7 @@ struct SourceLifecycleExample: View {
                 Text("Badge and gate reads stay passive. Choose Connect macro source to start updates without requesting a refresh. Hidden content keeps its connection while the model lives. Release the model to cancel it.")
             }
         }
+        .onDisappear(perform: model.cancelReload)
         .navigationTitle("Source lifecycle")
         .accessibilityIdentifier("sample.source-lifecycle.screen")
     }
@@ -115,13 +116,14 @@ private final class SourceLifecycleModel {
         id: \.isSecond,
         initial: { _ in .available(SampleEntry.cached) },
         make: { (model: Self) in model.currentSource.values() },
-        refresh: { model in model.currentSource.reload() }
+        refresh: { model in await model.currentSource.reload() }
     )
     @ObservationIgnored
     var entries: ViewData<[SampleEntry]>
     private(set) var isSecond = false
     private let first = SourceLabUseCase(seed: SampleEntry.cached)
     private let second = SourceLabUseCase(seed: nil)
+    @ObservationIgnored private var reloadTask: Task<Void, Never>?
 
     var hasValue: Bool {
         if case .available = entries.latestValue { true } else { false }
@@ -129,7 +131,19 @@ private final class SourceLifecycleModel {
 
     private var currentSource: SourceLabUseCase { isSecond ? second : first }
 
+    func reload() {
+        cancelReload()
+        let data = entries
+        reloadTask = Task { await data.reload() }
+    }
+
+    func cancelReload() {
+        reloadTask?.cancel()
+        reloadTask = nil
+    }
+
     func swap() {
+        cancelReload()
         isSecond.toggle()
     }
 
@@ -150,7 +164,7 @@ private final class MacroSourceModel {
 
     @ViewDataSource(
         make: { (model: Self) in model.useCase.values() },
-        refresh: { model in model.useCase.reload() }
+        refresh: { model in await model.useCase.reload() }
     )
     var entries: ViewData<[SampleEntry]>
 }
@@ -162,6 +176,7 @@ private final class SourceLabUseCase {
     @ObservationIgnored private var connectionCount = 0
     @ObservationIgnored private var seed: [SampleEntry]?
     @ObservationIgnored private var continuations: [UUID: AsyncStream<Result<[SampleEntry], SampleFailure>>.Continuation] = [:]
+    @ObservationIgnored private var response: SampleGate?
 
     init(seed: [SampleEntry]?) { self.seed = seed }
 
@@ -184,14 +199,22 @@ private final class SourceLabUseCase {
     }
 
     // Responses are held until the user delivers them, making the handoff visible.
-    func reload() {}
+    func reload() async {
+        response?.open()
+        let gate = SampleGate()
+        response = gate
+        await gate.wait()
+        if response === gate { response = nil }
+    }
 
     func deliver() {
         seed = SampleEntry.refreshed
         for continuation in continuations.values { continuation.yield(.success(SampleEntry.refreshed)) }
+        response?.open()
     }
 
     func fail() {
         for continuation in continuations.values { continuation.yield(.failure(.offline)) }
+        response?.open()
     }
 }

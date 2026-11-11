@@ -124,7 +124,71 @@ struct ViewDataSourceMacroTests {
         )
     }
 
+    @Test("Loadable sources forward the producer", arguments: [false, true])
+    func loadableExpansion(_ keyed: Bool) {
+        assertMacroExpansion(
+            """
+            class Model {
+                @ViewDataSource(\(keyed ? "id: \\.filterID, " : "")updates: { (model: Self) in model.producer() })
+                var value: ViewData<Int>
+            }
+            """,
+            expandedSource: """
+            class Model {
+                var value: ViewData<Int> {
+                    get {
+                        let __macro_local_4datafMu_ = ViewData<Int>._source(
+                            _value,
+                            owner: self,
+                            declaration: "Model.value",
+                            id: {\(keyed ? "" : " _ in")
+                                \(keyed ? "$0 [keyPath: \\.filterID]" : "false")
+                            },
+                            updates: { (model: Model) in
+                                model.producer()
+                            },
+                            receive: nil
+                        )
+                        _value = __macro_local_4datafMu_
+                        return __macro_local_4datafMu_.data
+                    }
+                }
+
+                @ObservationIgnored private var _value: ViewData<Int>._Source?
+            }
+            """,
+            macroSpecs: ["ViewDataSource": MacroSpec(type: ViewDataSourceMacro.self)],
+            failureHandler: { Issue.record(Comment(rawValue: $0.message)) }
+        )
+    }
+
+    @Test("Rejects a separate seed for a loadable producer")
+    func rejectsLoadableSeed() {
+        assertMacroExpansion(
+            """
+            class Model {
+                @ViewDataSource(initial: nil, updates: { (model: Self) in model.producer() })
+                var value: ViewData<Int>
+            }
+            """,
+            expandedSource: """
+            class Model {
+                var value: ViewData<Int>
+            }
+            """,
+            diagnostics: [
+                DiagnosticSpec(
+                    message: "@ViewDataSource(updates:) seeds from the producer's availability",
+                    line: 2, column: 21
+                ),
+            ],
+            macroSpecs: ["ViewDataSource": MacroSpec(type: ViewDataSourceMacro.self)],
+            failureHandler: { Issue.record(Comment(rawValue: $0.message)) }
+        )
+    }
+
     @Test("Rejects direct instance captures, including seeds and nested callbacks", arguments: [
+        "updates: { (model: Model) in self.producer() }",
         "make: { (model: Model) in self.values() }",
         "make: { [weak self] (model: Model) in model.values() }",
         "make: { (model: Model) in model.values { self.reload() } }",
@@ -252,12 +316,16 @@ struct ViewDataSourceMacroTests {
         )
     }
 
-    @Test("Directs property initializers to the single macro seed form")
-    func propertyInitializer() {
+    @Test("Directs property initializers to the declaration's seed form", arguments: [false, true])
+    func propertyInitializer(_ loadable: Bool) {
+        let factory = loadable ? "updates: { (model: Self) in model.producer() }"
+            : "make: { (model: Self) in model.values() }"
+        let message = loadable ? "Supply the seed through the loadable producer's availability"
+            : "Supply a seed with @ViewDataSource(initial:), not a property initializer"
         assertMacroExpansion(
             """
             class Model {
-                @ViewDataSource(make: { (model: Self) in model.values() })
+                @ViewDataSource(\(factory))
                 var value: ViewData<Int> = ViewData(.available(7))
             }
             """,
@@ -267,7 +335,7 @@ struct ViewDataSourceMacroTests {
             }
             """,
             diagnostics: [DiagnosticSpec(
-                message: "Supply a seed with @ViewDataSource(initial:), not a property initializer",
+                message: message,
                 line: 3, column: 30
             )],
             macroSpecs: ["ViewDataSource": MacroSpec(type: ViewDataSourceMacro.self)],

@@ -59,6 +59,7 @@ nonisolated let ensembleLog = Logger(
 enum EnsembleReloadMode: String {
     case resubscribe
     case refresh
+    case loadable
     case disabled
 }
 

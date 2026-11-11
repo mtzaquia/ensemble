@@ -149,3 +149,36 @@ public macro ViewDataSource<Owner: AnyObject, ID: Equatable, Value, Source: Asyn
     allowsReload: Bool = true,
     receive: @escaping @MainActor (Owner, Source.Element, ViewDataSink<Value>) -> Void
 ) = #externalMacro(module: "EnsembleMacros", type: "ViewDataSourceMacro")
+
+/// Declares a fixed producer that provides its own seed, updates, and load action.
+///
+/// First access creates a dormant producer and seeds the stable `ViewData` from its availability.
+/// Connecting subscribes to that producer and requests its initial load. Reload and retry ask
+/// the same producer for a reload, resubscribing first if the sequence completed.
+///
+/// - Parameters:
+///   - updates: A prompt factory for a producer whose construction starts no work.
+///   - receive: An optional owner-aware override for applying the producer's native elements.
+@attached(accessor, names: named(get))
+@attached(peer, names: prefixed(_))
+public macro ViewDataSource<Owner: AnyObject, Source: ViewDataLoadableSource>(
+    updates: @escaping @MainActor (Owner) -> Source,
+    receive: (@MainActor (Owner, Source.Updates.Element, ViewDataSink<Source.Value>) -> Void)? = nil
+) = #externalMacro(module: "EnsembleMacros", type: "ViewDataSourceMacro")
+
+/// Declares a loadable producer selected by an observable identity key path.
+///
+/// A new identity gets its own producer, cache seed, and initial load. Its availability replaces
+/// the previous identity's presentation, including when the new producer has no cached value.
+///
+/// - Parameters:
+///   - id: A key-path literal projecting the connection's `Equatable` identity from its owner.
+///   - updates: A prompt factory for a producer whose construction starts no work.
+///   - receive: An optional owner-aware override for applying the producer's native elements.
+@attached(accessor, names: named(get))
+@attached(peer, names: prefixed(_))
+public macro ViewDataSource<Owner: AnyObject, ID: Equatable, Source: ViewDataLoadableSource>(
+    id: KeyPath<Owner, ID>,
+    updates: @escaping @MainActor (Owner) -> Source,
+    receive: (@MainActor (Owner, Source.Updates.Element, ViewDataSink<Source.Value>) -> Void)? = nil
+) = #externalMacro(module: "EnsembleMacros", type: "ViewDataSourceMacro")

@@ -55,6 +55,14 @@ public struct ViewDataSink<Value> {
         }
     }
 
+    /// Applies a loadable source's result or reset.
+    public func receive(_ update: ViewDataUpdate<Value>) {
+        switch update {
+        case .result(let result): receive(result)
+        case .reset: reset()
+        }
+    }
+
     /// Returns presentation state to empty without ending the binding.
     public func reset() {
         apply(.reset)

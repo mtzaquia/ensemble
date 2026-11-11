@@ -104,14 +104,16 @@ struct SourceHostingTests {
         #expect(model.data === previous)
         #expect(replacement.refreshes == 0)
         #expect(probe.lastSample == "41-latest")
-        await model.data.reload()
+        let reload = Task { await model.data.reload() }
+        defer { reload.cancel() }
         try await render(host) { probe.samples.contains("41-retained") }
         // Give source startup's metadata and loading updates a frame to render as well.
         try await Task.sleep(for: .milliseconds(30))
         host.layoutSubtreeIfNeeded()
         #expect(probe.lastSample == "41-retained")
         #expect(model.data.latestValue == .available(41))
-        replacement.continuation?.yield(.success(99))
+        replacement.completeRefresh(with: 99)
+        await reload.value
         try await render(host) { probe.samples.contains("99-latest") }
         #expect(model.data.latestValue == .available(99))
     }
@@ -132,6 +134,7 @@ private final class HostedSource {
     var valueOnSubscription: Int?
     var deliversOnRefresh = true
     var continuation: AsyncStream<Result<Int, HostedError>>.Continuation?
+    private let manualRefresh = AsyncStream<Void>.makeStream()
     func values() -> AsyncStream<Result<Int, HostedError>> {
         connections += 1
         let (stream, continuation) = AsyncStream<Result<Int, HostedError>>.makeStream()
@@ -139,9 +142,18 @@ private final class HostedSource {
         if let valueOnSubscription { continuation.yield(.success(valueOnSubscription)) }
         return stream
     }
-    func reload() {
+    func reload() async {
         refreshes += 1
-        if deliversOnRefresh { continuation?.yield(.success(42)) }
+        if deliversOnRefresh {
+            continuation?.yield(.success(42))
+        } else {
+            for await _ in manualRefresh.stream {}
+        }
+    }
+
+    func completeRefresh(with value: Int) {
+        continuation?.yield(.success(value))
+        manualRefresh.continuation.finish()
     }
 }
 
@@ -153,7 +165,7 @@ private final class HostedModel {
     var useCase: HostedSource
     let initial: ViewDataAvailability<Int>
     var showsContent = true
-    func start() { Ensemble.connect(data) }
+    func start() { data.connect() }
     var hasContent: Bool {
         if case .available = data.latestValue { true } else { false }
     }
@@ -162,7 +174,7 @@ private final class HostedModel {
         id: \.sourceID,
         initial: { (model: Self) in model.initial },
         make: { (model: Self) in model.useCase.values() },
-        refresh: { model in model.useCase.reload() }
+        refresh: { model in await model.useCase.reload() }
     )
     @ObservationIgnored
     var data: ViewData<Int>

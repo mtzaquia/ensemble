@@ -57,6 +57,21 @@ it runs once before the first rendering. In an `@Observable` class, put `@Observ
 after the macro annotation.
 See [Source-backed data](../docs/source-backed-data.md) for policies, lifecycle, and migration.
 
+## Loadable sources
+
+Select **Loadable sources** or launch with `--scenario=loadable-sources`. The model declares
+`@ViewDataSource(id:updates:)` and returns a local producer with a cached snapshot.
+
+1. The snapshot row reads the personal cache while the producer is dormant.
+2. Choose **Show entries**. Rendering `AsyncContent` subscribes and requests the initial load.
+3. Choose **Reload** to simulate a failure. The snapshot row keeps the loaded value. **Retry**
+   refreshes the same producer.
+4. Choose **Switch account**. The work producer begins with an unavailable seed and loads its own
+   entries. Switch back to repeat the personal account flow.
+
+The UI test exercises the cached first read, automatic startup, retry, and account switch.
+Package tests also cover request completion, cancellation, reset, and rebinding with either seed.
+
 ## Animated reordering
 
 The `animated-reordering` scenario is the direct animation acceptance path:

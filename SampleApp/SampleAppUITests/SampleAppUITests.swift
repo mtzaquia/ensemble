@@ -89,6 +89,26 @@ nonisolated final class SampleAppUITests: XCTestCase {
     }
 
     @MainActor
+    func testLoadableSourceStartsWhenEntriesAppearAndRetriesOnTheSameProducer() {
+        launch(.loadableSources)
+
+        let snapshot = element(A11y.loadableSnapshot)
+        XCTAssertTrue(waitForLabelContaining("Cached personal entries", on: snapshot))
+        app.buttons[A11y.loadableShow].tap()
+        XCTAssertTrue(waitForLabelContaining("Loaded personal entries", on: snapshot))
+
+        app.buttons[A11y.loadableReload].tap()
+        let retry = app.buttons[A11y.loadableRetry]
+        XCTAssertTrue(retry.waitForExistence(timeout: 3))
+        XCTAssertTrue(waitForLabelContaining("Loaded personal entries", on: snapshot))
+        retry.tap()
+        XCTAssertTrue(waitForLabelContaining("Refreshed personal entries", on: snapshot))
+
+        app.buttons[A11y.loadableSwitch].tap()
+        XCTAssertTrue(waitForLabelContaining("Loaded work entries", on: snapshot))
+    }
+
+    @MainActor
     func testLoadingLabCanDeleteCacheAndFinishRequest() {
         launch(.loadingLab)
 
@@ -482,6 +502,7 @@ nonisolated final class SampleAppUITests: XCTestCase {
 
 private enum Scenario: String {
     case sourceLifecycle = "source-lifecycle"
+    case loadableSources = "loadable-sources"
     case loadingLab = "loading-lab"
     case screenReplacement = "screen-replacement"
     case cachedRefresh = "cached-refresh"
@@ -490,6 +511,12 @@ private enum Scenario: String {
 }
 
 private enum A11y {
+    static let loadableSnapshot = "sample.loadable-sources.snapshot"
+    static let loadableShow = "sample.loadable-sources.show"
+    static let loadableSwitch = "sample.loadable-sources.switch"
+    static let loadableReload = "sample.loadable-sources.reload"
+    static let loadableRetry = "sample.loadable-sources.retry"
+
     static let loadingLabScreen = "sample.loading-lab.screen"
     static let loadingLabStage = "sample.loading-lab.stage"
     static let loadingLabDeleteCache = "sample.loading-lab.delete-cache"

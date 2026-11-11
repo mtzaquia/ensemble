@@ -76,6 +76,8 @@ private final class OwnerParameterRewriter: SyntaxRewriter {
 
 /// Expands a source property into private storage and lazy source configuration.
 public struct ViewDataSourceMacro: AccessorMacro, PeerMacro {
+    private static let callbackLabels = ["initial", "make", "refresh", "updates", "receive"]
+
     private static func isViewData(_ type: TypeSyntax) -> Bool {
         if let identifier = type.as(IdentifierTypeSyntax.self) {
             return identifier.name.text == "ViewData" && identifier.genericArgumentClause?.arguments.count == 1
@@ -89,6 +91,7 @@ public struct ViewDataSourceMacro: AccessorMacro, PeerMacro {
 
     private static func property(
         _ declaration: some DeclSyntaxProtocol,
+        attribute: AttributeSyntax,
         context: some MacroExpansionContext
     ) throws -> (VariableDeclSyntax, String, String) {
         guard let variable = declaration.as(VariableDeclSyntax.self),
@@ -108,9 +111,16 @@ public struct ViewDataSourceMacro: AccessorMacro, PeerMacro {
             )])
         }
         if let initializer = binding.initializer {
+            let message: String
+            if case .argumentList(let arguments) = attribute.arguments,
+               arguments.contains(where: { $0.label?.text == "updates" }) {
+                message = "Supply the seed through the loadable producer's availability"
+            } else {
+                message = "Supply a seed with @ViewDataSource(initial:), not a property initializer"
+            }
             throw DiagnosticsError(diagnostics: [Diagnostic(
                 node: Syntax(initializer),
-                message: SourceDiagnostic(message: "Supply a seed with @ViewDataSource(initial:), not a property initializer")
+                message: SourceDiagnostic(message: message)
             )])
         }
         return (variable, name, type.trimmedDescription)
@@ -131,7 +141,7 @@ public struct ViewDataSourceMacro: AccessorMacro, PeerMacro {
         let rewriter = OwnerParameterRewriter(owner: owner)
         return Dictionary(uniqueKeysWithValues: arguments.compactMap { argument in
             argument.label.map { label in
-                if ["initial", "make", "refresh", "receive"].contains(label.text),
+                if callbackLabels.contains(label.text),
                    var closure = argument.expression.as(ClosureExprSyntax.self),
                    let signature = closure.signature {
                     closure.signature = rewriter.rewrite(signature).as(ClosureSignatureSyntax.self)
@@ -144,6 +154,13 @@ public struct ViewDataSourceMacro: AccessorMacro, PeerMacro {
 
     private static func validateCallbacks(_ node: AttributeSyntax) throws {
         guard case .argumentList(let arguments) = node.arguments else { return }
+        if arguments.contains(where: { $0.label?.text == "updates" }),
+           let initial = arguments.first(where: { $0.label?.text == "initial" }) {
+            throw DiagnosticsError(diagnostics: [Diagnostic(
+                node: Syntax(initial),
+                message: SourceDiagnostic(message: "@ViewDataSource(updates:) seeds from the producer's availability")
+            )])
+        }
         if let identity = arguments.first(where: { $0.label?.text == "id" }) {
             guard identity.expression.is(KeyPathExprSyntax.self) else {
                 throw DiagnosticsError(diagnostics: [Diagnostic(
@@ -160,8 +177,9 @@ public struct ViewDataSourceMacro: AccessorMacro, PeerMacro {
                 )])
             }
         }
-        for argument in arguments where ["initial", "make", "refresh", "receive"].contains(argument.label?.text) {
-            if argument.label?.text != "make", argument.expression.is(NilLiteralExprSyntax.self) { continue }
+        for argument in arguments where callbackLabels.contains(argument.label?.text ?? "") {
+            if argument.label?.text != "make", argument.label?.text != "updates",
+               argument.expression.is(NilLiteralExprSyntax.self) { continue }
             guard let closure = argument.expression.as(ClosureExprSyntax.self) else {
                 throw DiagnosticsError(diagnostics: [Diagnostic(
                     node: Syntax(argument.expression),
@@ -191,7 +209,7 @@ public struct ViewDataSourceMacro: AccessorMacro, PeerMacro {
         in context: some MacroExpansionContext
     ) throws -> [AccessorDeclSyntax] {
         // The peer role diagnoses invalid declarations once; do not duplicate that diagnostic.
-        guard let (variable, name, type) = try? property(declaration, context: context) else { return [] }
+        guard let (variable, name, type) = try? property(declaration, attribute: node, context: context) else { return [] }
         guard (try? validateCallbacks(node)) != nil else { return [] }
         if isObservable(context), !variable.attributes.contains(where: {
             $0.as(AttributeSyntax.self)?.attributeName.trimmedDescription.split(separator: ".").last == "ObservationIgnored"
@@ -202,9 +220,6 @@ public struct ViewDataSourceMacro: AccessorMacro, PeerMacro {
             )])
         }
         let args = arguments(node, context: context)
-        guard let make = args["make"] else { return [] }
-        let receive = args["receive"].flatMap { $0 == "nil" ? nil : $0 }
-            ?? "{ _, result, sink in sink.receive(result) }"
         let data = context.makeUniqueName("data")
         let owner = context.lexicalContext.first!.cast(ClassDeclSyntax.self).name.text
         let declaration = StringLiteralExprSyntax(content: "\(owner).\(name)")
@@ -214,6 +229,25 @@ public struct ViewDataSourceMacro: AccessorMacro, PeerMacro {
         } else {
             identity = "{ _ in false }"
         }
+        let sourceArguments: String
+        if let updates = args["updates"] {
+            sourceArguments = """
+            updates: \(updates),
+            receive: \(args["receive"] ?? "nil")
+            """
+        } else if let make = args["make"] {
+            let receive = args["receive"].flatMap { $0 == "nil" ? nil : $0 }
+                ?? "{ _, result, sink in sink.receive(result) }"
+            sourceArguments = """
+            initial: \(args["initial"] ?? "nil"),
+            make: \(make),
+            refresh: \(args["refresh"] ?? "nil"),
+            allowsReload: \(args["allowsReload"] ?? "true"),
+            receive: \(receive)
+            """
+        } else {
+            return []
+        }
         return [
             """
             get {
@@ -222,11 +256,7 @@ public struct ViewDataSourceMacro: AccessorMacro, PeerMacro {
                     owner: self,
                     declaration: \(declaration),
                     id: \(raw: identity),
-                    initial: \(raw: args["initial"] ?? "nil"),
-                    make: \(raw: make),
-                    refresh: \(raw: args["refresh"] ?? "nil"),
-                    allowsReload: \(raw: args["allowsReload"] ?? "true"),
-                    receive: \(raw: receive)
+                    \(raw: sourceArguments)
                 )
                 _\(raw: name) = \(data)
                 return \(data).data
@@ -240,7 +270,7 @@ public struct ViewDataSourceMacro: AccessorMacro, PeerMacro {
         providingPeersOf declaration: some DeclSyntaxProtocol,
         in context: some MacroExpansionContext
     ) throws -> [DeclSyntax] {
-        let (_, name, type) = try property(declaration, context: context)
+        let (_, name, type) = try property(declaration, attribute: node, context: context)
         try validateCallbacks(node)
         return ["@ObservationIgnored private var _\(raw: name): \(raw: type)._Source?"]
     }

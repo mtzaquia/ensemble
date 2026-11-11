@@ -415,7 +415,7 @@ struct ViewDataTests {
 
         await data.reload()
         #expect(continuations.count == 2)
-        #expect(data.isLoading)
+        #expect(!data.isLoading)
         #expect(await eventually { data.latestValue == .available(42) && data.isSuccessful })
         continuations.last?.finish()
     }
@@ -692,7 +692,7 @@ struct ViewDataTests {
         #expect(await eventually { data.binding?.isConnected == true })
 
         await data.reload()
-        #expect(data.isLoading)
+        #expect(!data.isLoading)
         #expect(sourceCount == 1)
         #expect(refreshCount == 1)
         #expect(await eventually { data.isSuccessful && data.latestValue == .available(1) })
@@ -730,10 +730,30 @@ struct ViewDataTests {
 
         await data.reload()
         #expect(continuations.count == 2)
-        #expect(data.isLoading)
+        #expect(!data.isLoading)
         #expect(await eventually { data.isSuccessful && data.latestValue == .available(42) })
 
         continuations[1].finish()
+    }
+
+    @Test("A silent refresh settles loading and keeps receiving updates",
+          arguments: [ViewData<Int>.Phase.Kind.empty, .success, .failure])
+    func refreshWithoutUpdate(_ precedingPhase: ViewData<Int>.Phase.Kind) async {
+        let (stream, continuation) = AsyncStream<Result<Int, TestError>>.makeStream()
+        let seed: ViewDataAvailability<Int> = precedingPhase == .empty ? .unavailable : .available(7)
+        let fixture = SourceFixture(seed, make: { stream }, refresh: {})
+        defer { withExtendedLifetime(fixture) {} }
+        let data = fixture.data
+        if precedingPhase == .failure { data.fail(TestError.expected) }
+
+        await data.reload()
+
+        #expect(data.phase.kind == precedingPhase)
+        #expect(data.latestValue == seed)
+        #expect(data.binding?.isRunning == true)
+        continuation.yield(.success(42))
+        #expect(await eventually { data.isSuccessful && data.latestValue == .available(42) })
+        continuation.finish()
     }
 
     @Test("Disabled reload exposes no retry action")

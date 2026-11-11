@@ -50,20 +50,19 @@ struct ViewDataSourceTests {
         #expect(data.phase.kind == .success)
     }
 
-    @Test("Repeated single and batch connection requests share the model's source")
+    @Test("Repeated connection requests share the model's source")
     func sharedConnection() async {
         let useCase = SourceUseCase()
         let model = SourceModel(useCase: useCase)
         defer { withExtendedLifetime(model) {} }
         let data = model.value
         data.connect()
-        Ensemble.connect(data, data)
+        data.connect()
         #expect(useCase.connections == 0)
         #expect(await eventually { useCase.connections == 1 })
         for _ in 0..<10 {
             #expect(model.value === data)
             data.connect()
-            Ensemble.connect(data)
             _ = AsyncContent(data) { value, _ in Text("\(value)") }
             await Task.yield()
         }
@@ -71,7 +70,6 @@ struct ViewDataSourceTests {
         #expect(await eventually { data.latestValue == .available(42) })
         #expect(useCase.connections == 1)
         #expect(useCase.refreshes == 0)
-        Ensemble.connect()
     }
 
     @Test("Badge and conditional-gate reads stay passive; model startup connects them")
@@ -102,14 +100,15 @@ struct ViewDataSourceTests {
         #expect(useCase.refreshes == 0)
     }
 
-    @Test("Batch connection starts heterogeneous sources without hot refreshes")
+    @Test("Connecting multiple sources leaves hot refresh actions idle")
     func declaredSeeds() async {
         let useCase = SourceUseCase()
         let model = SourceModel(useCase: useCase)
         defer { withExtendedLifetime(model) {} }
         #expect(model.seeded.latestValue == .available(7))
         #expect(model.empty.latestValue == .unavailable)
-        Ensemble.connect(model.seeded, model.empty, ViewData(.available("Passive")))
+        model.seeded.connect()
+        model.empty.connect()
         #expect(useCase.connections == 0)
         #expect(await eventually { useCase.connections == 2 })
         #expect(useCase.refreshes == 0)
@@ -276,7 +275,7 @@ private final class SourceModel {
         if case .available(let count) = value.latestValue { count } else { 0 }
     }
     var canShowContent: Bool { badgeCount > 0 }
-    func start() { Ensemble.connect(value) }
+    func start() { value.connect() }
     let initial: ViewDataAvailability<Int>
 
     @ViewDataSource(

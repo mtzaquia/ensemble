@@ -29,6 +29,7 @@ import UIKit
 
 enum SampleScenario: String, CaseIterable, Identifiable {
     case sourceLifecycle = "source-lifecycle"
+    case loadableSources = "loadable-sources"
     case loadingLab = "loading-lab"
     case screenReplacement = "screen-replacement"
     case cachedRefresh = "cached-refresh"
@@ -40,6 +41,7 @@ enum SampleScenario: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .sourceLifecycle: "Source lifecycle"
+        case .loadableSources: "Loadable sources"
         case .loadingLab: "Loading lab"
         case .screenReplacement: "Screen replacement"
         case .cachedRefresh: "Cached refresh"
@@ -52,6 +54,8 @@ enum SampleScenario: String, CaseIterable, Identifiable {
         switch self {
         case .sourceLifecycle:
             "Seed immediately, swap source instances, and connect property-declared streams."
+        case .loadableSources:
+            "Use one producer for cached entries, updates, and reloads."
         case .loadingLab:
             "Switch request states, tune latency, clear the cache, and trigger failures."
         case .screenReplacement:
@@ -68,6 +72,7 @@ enum SampleScenario: String, CaseIterable, Identifiable {
     var systemImage: String {
         switch self {
         case .sourceLifecycle: "arrow.left.arrow.right"
+        case .loadableSources: "tray.and.arrow.down"
         case .loadingLab: "slider.horizontal.3"
         case .screenReplacement: "rectangle.portrait.slash"
         case .cachedRefresh: "arrow.trianglehead.2.clockwise.rotate.90"
@@ -84,6 +89,8 @@ struct ScenarioDestination: View {
         switch scenario {
         case .sourceLifecycle:
             SourceLifecycleExample()
+        case .loadableSources:
+            LoadableSourceExample()
         case .loadingLab:
             LoadingLabExample()
         case .screenReplacement:
@@ -117,6 +124,12 @@ enum SampleAppUITesting {
 enum SampleAppAccessibility {
     static let catalog = "sample.catalog"
     static func scenarioLink(_ scenario: SampleScenario) -> String { "sample.catalog.\(scenario.rawValue)" }
+
+    static let loadableSnapshot = "sample.loadable-sources.snapshot"
+    static let loadableShow = "sample.loadable-sources.show"
+    static let loadableSwitch = "sample.loadable-sources.switch"
+    static let loadableReload = "sample.loadable-sources.reload"
+    static let loadableRetry = "sample.loadable-sources.retry"
 
     static let loadingLabScreen = "sample.loading-lab.screen"
     static let loadingLabStage = "sample.loading-lab.stage"

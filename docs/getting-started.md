@@ -55,7 +55,6 @@ Badge and conditional-gate reads stay passive. For those consumers, connect from
 ```swift
 func start() {
   entries.connect()
-  // Or: Ensemble.connect(profile, activity, notifications)
 }
 ```
 

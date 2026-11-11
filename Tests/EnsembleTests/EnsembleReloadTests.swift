@@ -202,6 +202,7 @@ struct EnsembleReloadTests {
         source.requests[0].finish()
         await first.value
         #expect(!secondReturned)
+        #expect(data.phase.kind == .loading)
         #expect(data.binding?.isConnected == true)
         source.emit(.success(42))
         #expect(await eventually { data.latestValue == .available(42) })

@@ -62,6 +62,7 @@ struct CachedRefreshExample: View {
                 Text("One binding observes a long-lived stream; a one-shot load can update the same ViewData in tandem.")
             }
         }
+        .onDisappear(perform: viewModel.cancelRefresh)
         .accessibilityIdentifier(SampleAppAccessibility.cachedRefreshScreen)
         .navigationTitle("Cached refresh")
     }
@@ -165,7 +166,7 @@ private final class CachedRefreshViewModel {
     @ViewDataSource(
         initial: { _ in .available(SampleEntry.cached) },
         make: { (model: Self) in model.useCase.values() },
-        refresh: { model in model.useCase.reload() }
+        refresh: { model in await model.useCase.reload() }
     )
     @ObservationIgnored
     var entries: ViewData<[SampleEntry]>
@@ -173,6 +174,7 @@ private final class CachedRefreshViewModel {
     var rowTaps = 0
 
     @ObservationIgnored private let useCase = CachedRefreshUseCase()
+    @ObservationIgnored private var refreshTask: Task<Void, Never>?
 
     var isLoading: Bool { entries.phase.kind == .loading }
     var hasPendingResponse: Bool { useCase.hasPendingResponse }
@@ -221,9 +223,16 @@ private final class CachedRefreshViewModel {
     }
 
     private func refresh(with update: CachedRefreshUseCase.Update) {
+        cancelRefresh()
         useCase.prepare(update, timing: timing)
-        // Reload the same destination. Do not reset it or redact retained content.
-        Task { await entries.reload() }
+        let data = entries
+        refreshTask = Task { await data.reload() }
+    }
+
+    func cancelRefresh() {
+        refreshTask?.cancel()
+        refreshTask = nil
+        useCase.cancelPendingResponse()
     }
 
     func loadOneValue() {
@@ -246,13 +255,17 @@ private final class CachedRefreshViewModel {
 private final class CachedRefreshUseCase {
     typealias Update = Result<[SampleEntry], SampleFailure>
 
-    private(set) var hasPendingResponse = false
+    private struct Response {
+        let update: Update
+        let gate = SampleGate()
+    }
+
+    var hasPendingResponse: Bool { pendingResponse != nil }
+    private var pendingResponse: Response?
     @ObservationIgnored private var continuations: [UUID: AsyncStream<Update>.Continuation] = [:]
     @ObservationIgnored private var latestUpdate: Update = .success(SampleEntry.cached)
     @ObservationIgnored private var nextUpdate: Update = .success(SampleEntry.cached)
     @ObservationIgnored private var timing = CachedRefreshTiming.slow
-    @ObservationIgnored private var pendingUpdate: Update?
-    @ObservationIgnored private var reloadTask: Task<Void, Never>?
 
     func values() -> AsyncStream<Update> {
         let id = UUID()
@@ -270,36 +283,38 @@ private final class CachedRefreshUseCase {
         self.timing = timing
     }
 
-    func reload() {
-        reloadTask?.cancel()
-        pendingUpdate = nextUpdate
-        hasPendingResponse = true
+    func reload() async {
+        cancelPendingResponse()
+        let response = Response(update: nextUpdate)
+        pendingResponse = response
+        defer {
+            if pendingResponse?.gate === response.gate { cancelPendingResponse() }
+        }
 
         switch timing {
         case .fast:
             deliverPendingResponse()
         case .slow:
-            reloadTask = Task { @MainActor [weak self] in
-                do {
-                    try await Task.sleep(for: .seconds(2))
-                } catch {
-                    return
-                }
-                guard !Task.isCancelled else { return }
-                self?.deliverPendingResponse()
+            do {
+                try await Task.sleep(for: .seconds(2))
+            } catch {
+                return
             }
+            if pendingResponse?.gate === response.gate { deliverPendingResponse() }
         case .manual:
-            break
+            await response.gate.wait()
         }
     }
 
     func deliverPendingResponse() {
-        guard let update = pendingUpdate else { return }
-        reloadTask?.cancel()
-        reloadTask = nil
-        pendingUpdate = nil
-        hasPendingResponse = false
+        guard let update = pendingResponse?.update else { return }
         latestUpdate = update
         for continuation in continuations.values { continuation.yield(update) }
+        cancelPendingResponse()
+    }
+
+    func cancelPendingResponse() {
+        pendingResponse?.gate.open()
+        pendingResponse = nil
     }
 }

@@ -189,6 +189,7 @@ struct LoadingLabExample: View {
             }
         }
         .accessibilityIdentifier(SampleAppAccessibility.loadingLabScreen)
+        .onDisappear(perform: viewModel.stop)
         .navigationTitle("Loading lab")
     }
 }
@@ -221,7 +222,7 @@ private final class LoadingLabViewModel {
     @ViewDataSource(
         initial: { _ in .available(SampleEntry.cached) },
         make: { (model: Self) in model.useCase.values() },
-        refresh: { _ in }
+        refresh: { model in await model.useCase.reload() }
     )
     @ObservationIgnored
     var entries: ViewData<[SampleEntry]?>
@@ -235,6 +236,7 @@ private final class LoadingLabViewModel {
 
     @ObservationIgnored private let useCase = LoadingLabUseCase()
     @ObservationIgnored private var automaticTask: Task<Void, Never>?
+    @ObservationIgnored private var refreshTask: Task<Void, Never>?
     @ObservationIgnored private var nextEventID = 0
     @ObservationIgnored private var requestIsActive = false
 
@@ -292,16 +294,14 @@ private final class LoadingLabViewModel {
 
     func select(_ stage: LoadingLabRequestStage) {
         pauseAutomaticLoading()
-        Task {
-            switch stage {
-            case .idle:
-                moveToIdle()
-            case .inFlight:
-                await beginRequest()
-            case .finished:
-                await beginRequestIfNeeded()
-                finishRequest()
-            }
+        switch stage {
+        case .idle:
+            moveToIdle()
+        case .inFlight:
+            beginRequest()
+        case .finished:
+            beginRequestIfNeeded()
+            finishRequest()
         }
     }
 
@@ -347,9 +347,7 @@ private final class LoadingLabViewModel {
     }
 
     func clearRetainedValue() {
-        pauseAutomaticLoading()
-        requestIsActive = false
-        requestStage = .idle
+        stop()
         entries.reset()
         record(
             title: "Retained value cleared",
@@ -359,9 +357,7 @@ private final class LoadingLabViewModel {
     }
 
     func restoreSampleValue() {
-        pauseAutomaticLoading()
-        requestIsActive = false
-        requestStage = .idle
+        stop()
         useCase.finish(with: .success(SampleEntry.cached))
         record(
             title: "Sample value restored",
@@ -375,6 +371,12 @@ private final class LoadingLabViewModel {
         nextEventID = 0
     }
 
+    func stop() {
+        pauseAutomaticLoading()
+        cancelRequest()
+        requestStage = .idle
+    }
+
     private func runAutomatically() {
         isRunningAutomatically = true
         record(
@@ -385,7 +387,7 @@ private final class LoadingLabViewModel {
 
         automaticTask = Task { @MainActor [weak self] in
             guard let self, !Task.isCancelled else { return }
-            await beginRequestIfNeeded()
+            beginRequestIfNeeded()
             guard !Task.isCancelled else { return }
             do {
                 try await Task.sleep(for: .seconds(duration))
@@ -403,15 +405,18 @@ private final class LoadingLabViewModel {
         isRunningAutomatically = false
     }
 
-    private func beginRequestIfNeeded() async {
+    private func beginRequestIfNeeded() {
         guard requestIsActive == false else { return }
-        await beginRequest()
+        beginRequest()
     }
 
-    private func beginRequest() async {
+    private func beginRequest() {
+        cancelRequest()
         requestIsActive = true
         requestStage = .inFlight
-        await entries.reload()
+        useCase.prepareRequest()
+        let data = entries
+        refreshTask = Task { await data.reload() }
         record(
             title: "Request started",
             detail: "Waiting for the next result. A previously visible failure remains on screen.",
@@ -452,7 +457,7 @@ private final class LoadingLabViewModel {
     }
 
     private func moveToIdle() {
-        requestIsActive = false
+        cancelRequest()
         requestStage = .idle
         if let latest = retainedEntries {
             useCase.finish(with: .success(latest))
@@ -466,6 +471,13 @@ private final class LoadingLabViewModel {
                 : "The latest response remains available without an active request.",
             systemImage: "pause.circle"
         )
+    }
+
+    private func cancelRequest() {
+        refreshTask?.cancel()
+        refreshTask = nil
+        useCase.cancelRequest()
+        requestIsActive = false
     }
 
     private var retainedEntries: [SampleEntry]? {
@@ -522,8 +534,14 @@ private final class LoadingLabViewModel {
 private final class LoadingLabUseCase {
     typealias Update = Result<[SampleEntry]?, SampleFailure>
 
+    private final class Request {
+        let gate = SampleGate()
+        var result: Update?
+    }
+
     private var continuations: [UUID: AsyncStream<Update>.Continuation] = [:]
     private var generation = 0
+    private var request: Request?
 
     func values() -> AsyncStream<Update> {
         let id = UUID()
@@ -536,6 +554,30 @@ private final class LoadingLabUseCase {
     }
 
     func finish(with update: Update) {
+        if let request {
+            request.result = update
+            request.gate.open()
+        } else {
+            publish(update)
+        }
+    }
+
+    func prepareRequest() { request = Request() }
+
+    func reload() async {
+        guard let request else { return }
+        await request.gate.wait()
+        guard self.request === request else { return }
+        self.request = nil
+        if !Task.isCancelled, let update = request.result { publish(update) }
+    }
+
+    func cancelRequest() {
+        request?.gate.open()
+        request = nil
+    }
+
+    private func publish(_ update: Update) {
         for continuation in continuations.values { continuation.yield(update) }
     }
 

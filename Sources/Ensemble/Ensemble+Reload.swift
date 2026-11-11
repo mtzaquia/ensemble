@@ -21,18 +21,6 @@
 //
 
 extension Ensemble {
-    /// Requests connection of each source without invoking hot refresh actions.
-    ///
-    /// This convenience has the same behavior as ``ViewData/connect()``. Requests schedule
-    /// startup, are idempotent, and keep their connections for their owning models' lifetimes.
-    /// It does not await initial data or upstream readiness. Cold sources start their initial work.
-    ///
-    /// - Parameter sources: The independent presentation sources to connect.
-    @MainActor
-    public static func connect<each Value>(_ sources: repeat ViewData<each Value>) {
-        repeat (each sources).connect()
-    }
-
     /// Calls each source's reload concurrently and waits for every request action.
     ///
     /// Sources may hold different value types. Each call has the same behavior as

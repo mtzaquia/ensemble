@@ -47,11 +47,11 @@ Connection starts explain their cause:
 | `reason` | Meaning |
 | --- | --- |
 | `render` | Rendering `AsyncContent` requested startup |
-| `connect` | A single or batch `connect()` requested startup |
+| `connect` | An explicit `connect()` requested startup |
 | `reload` | Reload requested work before the source had connected |
 | `identityChanged` | The projected ID compared unequal to the previous value |
 | `coldReload` | A cold request replaced its previous subscription |
-| `completedSource` | A hot reload reconnected a completed source before refreshing |
+| `completedSource` | A hot or loadable source resubscribed after its sequence completed |
 
 A reload request records `trigger=reload` or `trigger=retry`. Its generation is the connection
 present at the request; a following replacement starts a new generation. Replacement cancellation
@@ -70,8 +70,8 @@ For example, the same destination might produce:
 ```
 
 An equal identity renews dependency tracking without restarting its connection. In trace mode,
-`reason=identityEqual` makes that decision visible. A first cold reload that shares pending initial
-work reports `joined initial load` rather than another connection start.
+`reason=identityEqual` makes that decision visible. Cold and loadable sources report
+`joined initial load` when a reload shares the initial request.
 
 ## Diagnose data that stays seeded
 

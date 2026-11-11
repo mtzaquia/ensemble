@@ -70,11 +70,34 @@ extension ViewData {
         return _Source(data)
     }
 
-    /// Requests the model-owned source's connection without invoking its hot refresh action.
+    /// Returns the macro-owned storage for a loadable producer, seeded on first access.
+    ///
+    /// Applications declare these sources with `@ViewDataSource(updates:)`.
+    public static func _source<Owner: AnyObject, ID: Equatable, Source: ViewDataLoadableSource<Value>>(
+        _ existing: _Source?,
+        owner: Owner,
+        declaration: String,
+        id: @escaping @MainActor (Owner) -> ID,
+        updates: @escaping @MainActor (Owner) -> Source,
+        receive: (@MainActor (Owner, Source.Updates.Element, ViewDataSink<Value>) -> Void)?
+    ) -> _Source {
+        if let existing { return existing }
+        let initialID = id(owner)
+        let source = updates(owner)
+        let data = ViewData(source.availability)
+        data.binding = ViewDataBinding(
+            destination: data, owner: owner, declaration: declaration, id: id, initialID: initialID,
+            source: source, updates: updates, receive: receive
+        )
+        return _Source(data)
+    }
+
+    /// Requests the model-owned source's connection.
     ///
     /// Startup is scheduled outside the current call stack. Repeated calls share one connection,
     /// including after a sequence completes; use ``reload()`` to request another result.
-    /// A cold source naturally starts its initial work on connection. Returning does not imply
+    /// Cold and loadable sources start initial work on connection. Hot sources only subscribe.
+    /// Returning does not imply
     /// initial data has arrived or that an arbitrary upstream producer is ready.
     ///
     /// `AsyncContent` requests connection automatically when rendered, including when its initial
@@ -93,8 +116,11 @@ extension ViewData {
     /// that request's connection without ending the model-owned source configuration. The first
     /// explicit cold reload joins a pending initial load; later reloads resubscribe.
     /// Calling before connection ensures startup before requesting work.
-    /// Hot subscriptions keep delivering updates after refresh finishes. Reading the property or
+    /// Finishing a hot refresh settles its loading phase if it is still current. Its subscription
+    /// keeps delivering updates afterward. Reading the property or
     /// presenting it in another view does not restart a completed sequence.
+    /// Loadable sources await the producer's load action, joining an in-flight initial load.
+    /// Subsequent reloads reuse the producer, resubscribing if needed. Outcomes arrive separately.
     /// Unmanaged data, released owners, reload-disabled sources, and cancelled calls remain inert.
     /// Use ``Ensemble/reload(_:)`` to run several reload calls concurrently.
     public func reload() async {

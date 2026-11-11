@@ -32,15 +32,22 @@ final class ViewDataBinding<Value> {
     private enum ReloadBehavior {
         case resubscribe
         case refresh(@MainActor () -> (@MainActor () async -> Void)?)
+        case loadable
         case disabled
 
         var logMode: EnsembleReloadMode {
             switch self {
             case .resubscribe: .resubscribe
             case .refresh: .refresh
+            case .loadable: .loadable
             case .disabled: .disabled
             }
         }
+    }
+
+    private struct LoadableSource {
+        let subscribe: @MainActor (ViewDataBinding, UInt) -> Void
+        let load: @MainActor (ViewDataLoadRequest) async -> Void
     }
 
     private let makeConnection: Connect
@@ -60,10 +67,13 @@ final class ViewDataBinding<Value> {
     private var identityObservation: SourceValidity?
     private var connectionValidity: SourceValidity?
     private var needsRebind = false
+    private var loadableSource: LoadableSource?
+    private var initialLoad: Task<Void, Never>?
+    private var loadTasks: [UInt: Task<Void, Never>] = [:]
 
     var isRunning: Bool { task != nil }
 
-    init<Owner: AnyObject, ID: Equatable, Source: AsyncSequence>(
+    convenience init<Owner: AnyObject, ID: Equatable, Source: AsyncSequence>(
         destination: ViewData<Value>,
         owner: Owner,
         declaration: String,
@@ -73,7 +83,84 @@ final class ViewDataBinding<Value> {
         allowsReload: Bool,
         receive: @escaping @MainActor (Owner, Source.Element, ViewDataSink<Value>) -> Void
     ) {
-        var previousIdentity: ID?
+        let reloadBehavior: ReloadBehavior
+        if !allowsReload {
+            reloadBehavior = .disabled
+        } else if let refresh {
+            reloadBehavior = .refresh { [weak owner] in
+                guard let owner else { return nil }
+                return { await refresh(owner) }
+            }
+        } else {
+            reloadBehavior = .resubscribe
+        }
+        let connect = Self.connection(make: { [weak owner] in owner.map(make) }) { [weak owner] element, sink in
+            guard let owner else { return }
+            receive(owner, element, sink)
+        }
+        self.init(destination: destination, owner: owner, declaration: declaration, id: id,
+                  reloadBehavior: reloadBehavior, makeConnection: connect)
+    }
+
+    convenience init<Owner: AnyObject, ID: Equatable, Source: ViewDataLoadableSource<Value>>(
+        destination: ViewData<Value>,
+        owner: Owner,
+        declaration: String,
+        id: @escaping @MainActor (Owner) -> ID,
+        initialID: ID,
+        source: Source,
+        updates: @escaping @MainActor (Owner) -> Source,
+        receive: (@MainActor (Owner, Source.Updates.Element, ViewDataSink<Value>) -> Void)?
+    ) {
+        let prepare: @MainActor (Source) -> LoadableSource = { [weak owner] source in
+            LoadableSource(
+                subscribe: { binding, revision in
+                    guard binding.accepts(revision) else { return }
+                    let subscription = SourceSubscription(iterator: source.viewDataUpdates().makeAsyncIterator())
+                    guard binding.accepts(revision) else { return }
+                    binding.consume(subscription, revision: revision) { element, sink in
+                        guard let owner else { return }
+                        if let receive {
+                            receive(owner, element, sink)
+                        } else {
+                            sink.receive(source.viewDataUpdate(for: element))
+                        }
+                    }
+                },
+                load: { request in await source.load(request) }
+            )
+        }
+        self.init(
+            destination: destination, owner: owner, declaration: declaration, id: id,
+            initialID: .some(initialID), reloadBehavior: .loadable
+        ) { [weak owner] binding, revision in
+            if binding.loadableSource == nil {
+                guard let owner else { return false }
+                let source = updates(owner)
+                let availability = source.availability
+                guard binding.accepts(revision) else { return true }
+                binding.loadableSource = prepare(source)
+                switch availability {
+                case .available(let value): binding.destination?.set(value)
+                case .unavailable: binding.destination?.reset()
+                }
+            }
+            binding.loadableSource?.subscribe(binding, revision)
+            return true
+        }
+        loadableSource = prepare(source)
+    }
+
+    private init<Owner: AnyObject, ID: Equatable>(
+        destination: ViewData<Value>,
+        owner: Owner,
+        declaration: String,
+        id: @escaping @MainActor (Owner) -> ID,
+        initialID: ID? = nil,
+        reloadBehavior: ReloadBehavior,
+        makeConnection: @escaping Connect
+    ) {
+        var previousIdentity = initialID
         self.observeIdentity = { [weak owner] onChange in
             guard let owner else { return nil }
             let identity = withObservationTracking({ id(owner) }, onChange: onChange)
@@ -82,20 +169,8 @@ final class ViewDataBinding<Value> {
             previousIdentity = .some(identity)
             return changed
         }
-        if !allowsReload {
-            self.reloadBehavior = .disabled
-        } else if let refresh {
-            self.reloadBehavior = .refresh { [weak owner] in
-                guard let owner else { return nil }
-                return { await refresh(owner) }
-            }
-        } else {
-            self.reloadBehavior = .resubscribe
-        }
-        self.makeConnection = Self.connection(make: { [weak owner] in owner.map(make) }) { [weak owner] element, sink in
-            guard let owner else { return }
-            receive(owner, element, sink)
-        }
+        self.reloadBehavior = reloadBehavior
+        self.makeConnection = makeConnection
         self.destination = destination
         self.logSource = EnsembleLogSource(declaration: declaration, destination: ObjectIdentifier(destination))
         ensembleLog.ensembleDebug(.sourceInstalled(source: logSource))
@@ -153,13 +228,59 @@ final class ViewDataBinding<Value> {
             let currentRevision = revision
             let token = loadingToken
             if isConnected { await refresh() }
-            if Task.isCancelled, accepts(currentRevision), let token {
+            if accepts(currentRevision), let token {
                 destination.finishLoading(token)
                 if loadingToken == token { loadingToken = nil }
             }
+        case .loadable:
+            await reloadLoadable(trigger: trigger)
         case .disabled:
             break
         }
+    }
+
+    private func reloadLoadable(trigger: EnsembleReloadTrigger) async {
+        guard !Task.isCancelled else { return }
+        ensembleLog.ensembleDebug(.reloadRequested(
+            source: logSource, generation: revision, mode: .loadable, trigger: trigger
+        ))
+        if needsRebind { start(reason: .identityChanged) }
+        let request: Task<Void, Never>?
+        if trigger == .reload, let initialLoad, !initialLoad.isCancelled {
+            ensembleLog.ensembleDebug(.reloadJoinedInitial(source: logSource, generation: revision))
+            request = initialLoad
+        } else {
+            if task == nil || connectionValidity?.isValid == false {
+                reconnect(startsLoading: false, reason: .completedSource)
+            }
+            request = startLoad(.reload)
+        }
+        guard let request else { return }
+        await withTaskCancellationHandler {
+            await request.value
+        } onCancel: {
+            request.cancel()
+        }
+    }
+
+    private func startLoad(_ request: ViewDataLoadRequest) -> Task<Void, Never>? {
+        let currentRevision = revision
+        guard task != nil, accepts(currentRevision), let source = loadableSource, let destination else { return nil }
+        let token = destination.beginLoading()
+        loadingToken = token
+        let load = Task { [weak self] in
+            defer {
+                if let self, self.accepts(currentRevision) {
+                    self.loadTasks[token] = nil
+                    if request == .initial { self.initialLoad = nil }
+                    if self.loadingToken == token { self.finishLoading() }
+                }
+            }
+            guard !Task.isCancelled, self?.accepts(currentRevision) == true else { return }
+            await source.load(request)
+        }
+        loadTasks[token] = load
+        return load
     }
 
     private func waitForConnection(_ connection: Task<Void, Never>?) async {
@@ -188,14 +309,19 @@ final class ViewDataBinding<Value> {
         needsRebind = false
         cancelRetry()
         disconnect(reason: .ownerReleased)
+        loadableSource = nil
     }
 
     private func start(reason: EnsembleConnectionReason) {
-        // Activating a hot source only subscribes. Its refresh action is invoked explicitly by
-        // reload/retry. Cold sequences start their work when connected.
-        let startsLoading: Bool
-        if case .refresh = reloadBehavior { startsLoading = false } else { startsLoading = true }
-        reconnect(startsLoading: startsLoading, reason: reason)
+        switch reloadBehavior {
+        case .resubscribe, .disabled:
+            reconnect(startsLoading: true, reason: reason)
+        case .refresh:
+            reconnect(startsLoading: false, reason: reason)
+        case .loadable:
+            reconnect(startsLoading: false, reason: reason)
+            initialLoad = startLoad(.initial)
+        }
     }
 
     private func reconnect(startsLoading: Bool, reason: EnsembleConnectionReason) {
@@ -234,6 +360,9 @@ final class ViewDataBinding<Value> {
         revision &+= 1
         task?.cancel()
         task = nil
+        for load in loadTasks.values { load.cancel() }
+        loadTasks.removeAll()
+        initialLoad = nil
         guard isConnected else { return }
         isConnected = false
         destination?.removeRetryAction()
@@ -259,10 +388,13 @@ final class ViewDataBinding<Value> {
             Task { @MainActor [weak self] in self?.identityDidChange() }
         }
         guard let changed else { cancel(); return }
-        if changed, isConnected {
-            needsRebind = true
-            connectionValidity?.invalidate()
-            cancelRetry()
+        if changed {
+            loadableSource = nil
+            if isConnected {
+                needsRebind = true
+                connectionValidity?.invalidate()
+                cancelRetry()
+            }
         } else if isConnected {
             ensembleLog.ensembleDebug(.bindingIdentityUnchanged(source: logSource, generation: revision))
         }
@@ -347,6 +479,14 @@ final class ViewDataBinding<Value> {
     isolated deinit {
         cancel()
     }
+}
+
+// Capture the iterator at subscription time, before a load can publish an update. Iteration
+// continues through the same for-await path as a regular sequence.
+private nonisolated struct SourceSubscription<AsyncIterator: AsyncIteratorProtocol>: AsyncSequence {
+    let iterator: AsyncIterator
+
+    func makeAsyncIterator() -> AsyncIterator { iterator }
 }
 
 // Identity notifications and request cancellation may arrive from any executor. Separate tokens

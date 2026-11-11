@@ -66,8 +66,7 @@ func sourceStartsWhenRequested() async {
 ```
 
 Calling `reload()` before startup also connects the source. Direct and batch reloads have the same
-behavior; `Ensemble.reload(...)` only runs independent requests concurrently. Use
-`Ensemble.connect(...)` to start several heterogeneous sources without invoking hot refresh actions.
+behavior. `Ensemble.reload(...)` runs independent requests concurrently.
 
 ## Synchronize ongoing streams with the fixture
 
@@ -85,6 +84,24 @@ Keep the owning model alive throughout a source test. Retaining only its `ViewDa
 the source's lifetime. To test teardown, release the model deliberately and verify that retained
 sinks and retries can no longer change its data.
 
+## Test loadable producers
+
+Use a generic fixture that records factory calls, availability reads, subscriptions, and load
+requests. Gate each `load(_:)` so tests can wait for it to start, emit outcomes independently,
+and decide when it returns. Give the fixture's signals deadlines to make missing callbacks fail
+instead of hanging.
+
+- Read the property and assert its seed before connecting. The factory and availability should
+  each be read once, with zero subscriptions and load requests.
+- Connect and wait for `.initial` to start. While it is held, invoke `reload()` and verify it
+  awaits that same request. Release the gate, then check that the next reload requests `.reload`
+  on the existing producer.
+- Switch identities while a request is gated. Assert the new producer's seed, including
+  `.unavailable`, then verify both the old subscription and its loads are cancelled. Release
+  the owner while retaining `ViewData` to exercise teardown separately.
+- Signal accepted updates before checking presentation. A failure keeps the most recent success,
+  a reset clears it, and completing a load can precede delivery of either outcome.
+
 ## Test identity and rendering separately
 
 Start the source, await its initial subscription, and mutate observable identity inputs on the main
@@ -92,7 +109,8 @@ actor. When several inputs form one update, change them in one synchronous opera
 `await`, reload, or reentrant callback can observe a partially updated model.
 
 Check that an unequal ID selects the new producer and rejects old sinks, while an equal ID preserves
-the subscription, pending work, and retry. Rebinding retains success and does not reapply the seed.
+the subscription, pending work, and retry. A `make:` declaration retains success on rebinding.
+An `updates:` declaration replaces it with the new producer's availability.
 
 Use hosted SwiftUI or sample UI tests for automatic `AsyncContent` startup, conditional rendering,
 retained rows, transactions, and animation behavior. Constructing an `AsyncContent` value alone does
