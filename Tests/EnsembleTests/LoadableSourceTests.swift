@@ -344,7 +344,7 @@ extension LoadProducer: ViewDataLoadableSource {
         }
     }
 
-    func load(_ request: ViewDataLoadRequest) async {
+    func viewDataLoad(_ request: ViewDataLoadRequest) async {
         let index = requests.count
         requests.append(request)
         subscriptionAtRequest.append(subscriptions)

@@ -75,7 +75,7 @@ an explicit refresh; cold sources begin loading on activation. Reload preserves 
 
 A [loadable producer](source-backed-data.md#loadable-sources) supplies its availability on first
 read. On connection, Ensemble subscribes and requests `.initial`. Reload joins that request while
-it is running. Subsequent reloads and retries call `load(.reload)` on the same producer,
+it is running. Subsequent reloads and retries call `viewDataLoad(.reload)` on the same producer,
 resubscribing if needed. Reload waits for the load action, and the stream stays active.
 
 ## Reload several sources together

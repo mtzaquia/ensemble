@@ -122,7 +122,7 @@ private final class LoadableEntriesProducer: ViewDataLoadableSource {
         return stream
     }
 
-    func load(_ request: ViewDataLoadRequest) async {
+    func viewDataLoad(_ request: ViewDataLoadRequest) async {
         let account = isWorkAccount ? "work" : "personal"
         if request == .reload {
             reloads += 1

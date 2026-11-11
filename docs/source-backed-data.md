@@ -82,7 +82,7 @@ var purchases: ViewData<[Purchase]>
 ```
 
 Omit `id` for a fixed producer. A `ViewDataLoadableSource<Value>` provides its already-held
-`availability`, a sequence through `viewDataUpdates()`, and `load(_:)`. Each subscription
+`availability`, a sequence through `viewDataUpdates()`, and `viewDataLoad(_:)`. Each subscription
 needs an independent iterator. Ensemble creates the iterator before requesting work. A producer
 that registers asynchronously should buffer or replay updates until the subscription is ready.
 
@@ -129,7 +129,7 @@ extension Composition: @retroactive ViewDataLoadableSource {
     }
   }
 
-  public func load(_ request: ViewDataLoadRequest) async {
+  public func viewDataLoad(_ request: ViewDataLoadRequest) async {
     await load(using: request == .initial ? .cached : .remote)
   }
 }

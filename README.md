@@ -121,8 +121,8 @@ Cold sources fetch through their sequence and resubscribe when `await entries.re
 
 Use `@ViewDataSource(updates:)` when the producer owns its cached value, update sequence, and load
 policies. Its `ViewDataLoadableSource` conformance supplies the seed on first read. Connection
-subscribes and requests `.initial`, and later reloads and retries request `.reload` on the same
-producer. See the [loadable sources guide](docs/source-backed-data.md#loadable-sources) for a
+subscribes and calls `viewDataLoad(.initial)`, and later reloads and retries pass `.reload` to
+the same producer. See the [loadable sources guide](docs/source-backed-data.md#loadable-sources) for a
 Continuum conformance.
 
 Source properties are get-only and seeded on first read. Reads stay passive. `AsyncContent`

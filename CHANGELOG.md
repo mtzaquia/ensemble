@@ -1,5 +1,9 @@
 # Release notes
 
+## Unreleased
+
+- Rename the loadable producer requirement to `viewDataLoad(_:)`.
+
 ## v3.0.0-beta.2
 
 - Declare a producer with `@ViewDataSource(updates:)` or `@ViewDataSource(id:updates:)`.

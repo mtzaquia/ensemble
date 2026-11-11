@@ -127,7 +127,7 @@ final class ViewDataBinding<Value> {
                         }
                     }
                 },
-                load: { request in await source.load(request) }
+                load: { request in await source.viewDataLoad(request) }
             )
         }
         self.init(

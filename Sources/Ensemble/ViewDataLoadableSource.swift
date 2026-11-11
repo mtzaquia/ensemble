@@ -56,7 +56,7 @@ public nonisolated protocol ViewDataLoadableSource<Value> {
 
     /// Supplies an independent subscription to the producer's updates.
     ///
-    /// Ensemble creates its iterator before calling ``load(_:)``. Register at sequence or
+    /// Ensemble creates its iterator before calling ``viewDataLoad(_:)``. Register at sequence or
     /// iterator creation, or buffer or replay updates until the subscription is ready.
     @MainActor func viewDataUpdates() -> Updates
 
@@ -67,7 +67,7 @@ public nonisolated protocol ViewDataLoadableSource<Value> {
     ///
     /// Ensemble cancels the task when the connection is replaced or the model is released.
     /// The producer owns cancellation and overlapping request policy.
-    @MainActor func load(_ request: ViewDataLoadRequest) async
+    @MainActor func viewDataLoad(_ request: ViewDataLoadRequest) async
 }
 
 extension ViewDataLoadableSource where Self: AsyncSequence, Updates == Self {

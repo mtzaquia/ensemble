@@ -87,7 +87,7 @@ sinks and retries can no longer change its data.
 ## Test loadable producers
 
 Use a generic fixture that records factory calls, availability reads, subscriptions, and load
-requests. Gate each `load(_:)` so tests can wait for it to start, emit outcomes independently,
+requests. Gate each `viewDataLoad(_:)` so tests can wait for it to start, emit outcomes independently,
 and decide when it returns. Give the fixture's signals deadlines to make missing callbacks fail
 instead of hanging.
 
