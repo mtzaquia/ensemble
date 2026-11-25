@@ -153,15 +153,21 @@ struct AsyncContentAnimationTests {
         data.set([1])
         var animatedMoved = false
         var unanimatedMoved = false
+        var animatedPositions: Set<CGFloat> = []
+        var unanimatedPositions: Set<CGFloat> = []
         for _ in 0..<50 {
             host.layoutSubtreeIfNeeded()
             animatedMoved = animatedMoved || animated.hasPositionAnimation
             unanimatedMoved = unanimatedMoved || unanimated.hasPositionAnimation
+            if let position = animated.renderedPosition { animatedPositions.insert(position.rounded()) }
+            if let position = unanimated.renderedPosition { unanimatedPositions.insert(position.rounded()) }
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(animated.position != before)
-        #expect(animatedMoved)
-        #expect(!unanimatedMoved)
+        #expect(animatedMoved || animatedPositions.count > 2,
+                "Rendered row positions: \(animatedPositions.sorted())")
+        #expect(!unanimatedMoved && unanimatedPositions.count <= 2,
+                "Rendered row positions: \(unanimatedPositions.sorted())")
     }
 
     @Test("List phase updates preserve a caller transaction that disables animations")
@@ -298,14 +304,16 @@ struct AsyncContentAnimationTests {
     ) async throws -> Bool {
         var moved = false
         var animated = false
+        var positions: Set<CGFloat> = []
         for _ in 0..<50 {
             host.layoutSubtreeIfNeeded()
             moved = moved || marker.position != position
             animated = animated || marker.hasPositionAnimation
+            if let position = marker.renderedPosition { positions.insert(position.rounded()) }
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(moved, "The update must change native List row layout")
-        return animated
+        return animated || positions.count > 2
     }
 
     private func render<Content: View>(
@@ -324,6 +332,20 @@ struct AsyncContentAnimationTests {
 private final class ListMovementProbe {
     weak var view: NSView?
     var position: CGFloat? { view.map { $0.convert($0.bounds, to: nil).minY } }
+
+    // AppKit can interpolate row frames without installing a layer animation named "position".
+    // Sample the rendered geometry as well so the probe works across List implementations.
+    var renderedPosition: CGFloat? {
+        var ancestor = view
+        while let current = ancestor {
+            if let presentation = current.layer?.presentation() {
+                return presentation.convert(presentation.bounds, to: nil).minY
+            }
+            ancestor = current.superview
+        }
+        return position
+    }
+
     var hasPositionAnimation: Bool {
         var ancestor = view
         while let current = ancestor {
