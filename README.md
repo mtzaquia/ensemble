@@ -33,11 +33,11 @@ AsyncContent(viewModel.entries) { entries, _ in
 ## Install
 
 Ensemble requires Swift 6.3 and supports iOS 17+ and macOS 14+. It is available through Swift
-Package Manager. Pin `3.0.0-beta.3` to try the v3 APIs.
+Package Manager.
 
 ```swift
 dependencies: [
-  .package(url: "https://github.com/mtzaquia/ensemble.git", exact: "3.0.0-beta.3"),
+  .package(url: "https://github.com/mtzaquia/ensemble.git", from: "3.0.0"),
 ]
 ```
 

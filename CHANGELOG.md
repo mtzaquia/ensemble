@@ -1,5 +1,18 @@
 # Release notes
 
+## v3.0.0
+
+- Declare model-owned sources with `@ViewDataSource`, with automatic connection from
+  `AsyncContent`, explicit startup through `connect()`, and identity-driven rebinding.
+- Adapt producers with `ViewDataLoadableSource` to reuse their cached values, updates, and
+  `viewDataLoad(_:)` action across initial loading, reload, and retry.
+- Reload individual sources or independent batches with `.automatic` or `.userInitiated`.
+  Hot `refresh:` closures receive the owner and reason. Retry is user-initiated.
+- Replace `ViewDataContext` registrations with source declarations and direct `ViewData`
+  load and reload methods. Seed ordinary data with `ViewData(.available(value))`.
+- Configure phase animations with `.phaseAnimation(...)`.
+- Follow the [v2 migration guide](docs/source-backed-data.md#migrate-from-v2) when upgrading.
+
 ## v3.0.0-beta.3
 
 - Rename the loadable producer requirement to `viewDataLoad(_:)`.
